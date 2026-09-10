@@ -1,132 +1,79 @@
-import { useEffect, useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import { useEffect, useRef, useState } from 'react'
+import { ForgotPasswordPage } from './components/ForgotPasswordPage'
+import { LoginPage } from './components/LoginPage'
+import { ResetPasswordPage } from './components/ResetPasswordPage'
+import { RoleHome } from './components/RoleHome'
+import { logout, restoreSession, type AuthSession } from './lib/auth'
+
+type View = { name: 'login' } | { name: 'forgot' } | { name: 'reset'; token: string }
+
+/**
+ * The emailed link points at /?token=…, so the token in the URL decides the
+ * first screen. Swap this for a router once there are more routes.
+ */
+function initialView(): View {
+  const token = new URLSearchParams(window.location.search).get('token')
+  return token ? { name: 'reset', token } : { name: 'login' }
+}
 
 function App() {
-  const [count, setCount] = useState(0)
-  const [apiMessage, setApiMessage] = useState('Connecting to backend...')
+  const [session, setSession] = useState<AuthSession | null>(null)
+  const [view, setView] = useState<View>(initialView)
+  const [isRestoring, setIsRestoring] = useState(true)
+  const hasRestoredRef = useRef(false)
 
+  /**
+   * The refresh cookie survives a reload — try to resume the session before showing the login
+   * screen. Guarded by a ref (not just a `let active` flag) because the refresh token is
+   * single-use: StrictMode's dev-only double-invoke would otherwise fire this twice and the
+   * second call would race the first's token rotation and fail.
+   */
   useEffect(() => {
-    fetch('/api')
-      .then((res) => res.text())
-      .then(setApiMessage)
-      .catch(() => setApiMessage('Could not reach backend (is it running on port 3000?)'))
+    if (hasRestoredRef.current) return
+    hasRestoredRef.current = true
+
+    restoreSession()
+      .then(setSession)
+      .finally(() => setIsRestoring(false))
   }, [])
 
+  const handleSignOut = async () => {
+    setSession(null)
+    await logout()
+  }
+
+  /** Drop the spent token so a refresh does not reopen the reset screen. */
+  const goTo = (next: View) => {
+    if (view.name === 'reset' && next.name !== 'reset') {
+      window.history.replaceState(null, '', window.location.pathname)
+    }
+    setView(next)
+  }
+
+  if (isRestoring) {
+    return null
+  }
+
+  if (session) {
+    return <RoleHome user={session.user} onSignOut={handleSignOut} />
+  }
+
+  if (view.name === 'reset') {
+    return (
+      <ResetPasswordPage
+        token={view.token}
+        onSignIn={() => goTo({ name: 'login' })}
+        onRequestNewLink={() => goTo({ name: 'forgot' })}
+      />
+    )
+  }
+
+  if (view.name === 'forgot') {
+    return <ForgotPasswordPage onBackToSignIn={() => goTo({ name: 'login' })} />
+  }
+
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-          <p>
-            Backend says: <strong>{apiMessage}</strong>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+    <LoginPage onSignedIn={setSession} onForgotPassword={() => goTo({ name: 'forgot' })} />
   )
 }
 
