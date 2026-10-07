@@ -8,6 +8,8 @@ interface DashboardShellProps {
   onBack?: () => void
   /** Shows a Profile button in the header (before Sign out) when provided. */
   onOpenProfile?: () => void
+  /** Overrides the <main> element's classes, e.g. to preserve a page's own max-width. Defaults to the original max-w-5xl styling. */
+  mainClassName?: string
 }
 
 /**
@@ -15,7 +17,13 @@ interface DashboardShellProps {
  * Profile and a "Back to dashboard" link), mirroring the shell pattern
  * established by `AuthShell` for the sign-in flow.
  */
-export function DashboardShell({ children, onSignOut, onBack, onOpenProfile }: DashboardShellProps) {
+export function DashboardShell({
+  children,
+  onSignOut,
+  onBack,
+  onOpenProfile,
+  mainClassName = 'mx-auto max-w-5xl px-6 py-12',
+}: DashboardShellProps) {
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-6 py-4">
@@ -45,7 +53,7 @@ export function DashboardShell({ children, onSignOut, onBack, onOpenProfile }: D
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-6 py-12">
+      <main className={mainClassName}>
         {onBack && (
           <button
             type="button"
