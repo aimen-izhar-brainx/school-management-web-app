@@ -8,12 +8,14 @@ import {
   findStudentSection,
   formatDateLabel,
   monthLabel,
-  statusInfo,
   studentMonthEntries,
   type AttendanceRecord,
 } from '../data/attendance'
 import { sectionLabel } from '../data/timetable'
 import type { AuthUser } from '../lib/auth'
+import { AttendanceList } from './AttendanceList'
+import { AttendanceStatusBadge } from './AttendanceStatusBadge'
+import { calculateAttendancePercentage, formatAttendancePercentage } from './attendancePercentage'
 import { DashboardShell } from './DashboardShell'
 
 interface MyAttendancePageProps {
@@ -44,7 +46,7 @@ export function MyAttendancePage({ user, onBack, onSignOut }: MyAttendancePagePr
   const present = entries.filter((entry) => entry.status === 'present').length
   const absent = entries.filter((entry) => entry.status === 'absent').length
   const leave = entries.filter((entry) => entry.status === 'leave').length
-  const percentage = entries.length > 0 ? Math.round((present / entries.length) * 100) : null
+  const percentage = calculateAttendancePercentage(present, entries.length)
 
   return (
     <DashboardShell onBack={onBack} onSignOut={onSignOut} mainClassName="mx-auto max-w-2xl px-6 py-12">
@@ -74,7 +76,7 @@ export function MyAttendancePage({ user, onBack, onSignOut }: MyAttendancePagePr
             <CalendarCheck2 className="size-3.5" />
             Attendance
           </p>
-          <p className="mt-1 text-2xl font-bold text-slate-900">{percentage === null ? '—' : `${percentage}%`}</p>
+          <p className="mt-1 text-2xl font-bold text-slate-900">{formatAttendancePercentage(percentage)}</p>
         </div>
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
           <p className="text-xs font-medium text-emerald-700">Present</p>
@@ -92,22 +94,14 @@ export function MyAttendancePage({ user, onBack, onSignOut }: MyAttendancePagePr
 
       <h2 className="mt-8 text-sm font-semibold text-slate-700">{monthLabel(monthKey)}</h2>
 
-      <ul className="mt-3 divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
-        {[...entries].reverse().map((entry) => {
-          const info = statusInfo(entry.status)
-          return (
-            <li key={entry.date} className="flex items-center justify-between px-4 py-2.5 text-sm">
-              <span className="text-slate-700">{formatDateLabel(entry.date)}</span>
-              <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${info.badgeClass}`}>
-                {info.label}
-              </span>
-            </li>
-          )
-        })}
-        {entries.length === 0 && (
-          <li className="px-4 py-6 text-center text-xs text-slate-400">No attendance marked for this month yet.</li>
-        )}
-      </ul>
+      <AttendanceList isEmpty={entries.length === 0} emptyMessage="No attendance marked for this month yet.">
+        {[...entries].reverse().map((entry) => (
+          <li key={entry.date} className="flex items-center justify-between px-4 py-2.5 text-sm">
+            <span className="text-slate-700">{formatDateLabel(entry.date)}</span>
+            <AttendanceStatusBadge status={entry.status} />
+          </li>
+        ))}
+      </AttendanceList>
     </DashboardShell>
   )
 }

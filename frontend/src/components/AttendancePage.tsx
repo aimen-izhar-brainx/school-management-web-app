@@ -19,6 +19,9 @@ import {
 } from '../data/attendance'
 import { SECTION_OPTIONS, sectionLabel } from '../data/timetable'
 import type { AuthUser } from '../lib/auth'
+import { AttendanceList } from './AttendanceList'
+import { AttendanceStatusBadge } from './AttendanceStatusBadge'
+import { formatAttendancePercentage } from './attendancePercentage'
 import { DashboardShell } from './DashboardShell'
 
 interface AttendancePageProps {
@@ -189,21 +192,16 @@ export function AttendancePage({ user, onBack, onSignOut }: AttendancePageProps)
               </div>
               <div className="flex gap-2">
                 {ATTENDANCE_STATUSES.map((status) => (
-                  <span
-                    key={status.id}
-                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${status.badgeClass}`}
-                  >
-                    <span className={`size-1.5 rounded-full ${status.dotClass}`} />
+                  <AttendanceStatusBadge key={status.id} status={status.id} dot>
                     {summarizeEntries(browseRecord.entries)[status.id]}
-                  </span>
+                  </AttendanceStatusBadge>
                 ))}
               </div>
             </div>
 
-            <ul className="mt-3 divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
+            <AttendanceList>
               {browseRoster.map((student) => {
                 const currentStatus = isEditing ? editDraft[student.id] : browseRecord.entries[student.id]
-                const info = currentStatus ? statusInfo(currentStatus) : null
 
                 return (
                   <li key={student.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
@@ -231,16 +229,12 @@ export function AttendancePage({ user, onBack, onSignOut }: AttendancePageProps)
                         })}
                       </div>
                     ) : (
-                      info && (
-                        <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${info.badgeClass}`}>
-                          {info.label}
-                        </span>
-                      )
+                      currentStatus && <AttendanceStatusBadge status={currentStatus} />
                     )}
                   </li>
                 )
               })}
-            </ul>
+            </AttendanceList>
 
             {browseRecord.editLog.length > 0 && (
               <div className="mt-4">
@@ -385,7 +379,7 @@ export function AttendancePage({ user, onBack, onSignOut }: AttendancePageProps)
                   <td className="px-4 py-2.5 text-slate-600">{stat.leave}</td>
                   <td className="px-4 py-2.5 text-slate-600">{stat.markedDays}</td>
                   <td className="px-4 py-2.5 font-semibold text-slate-900">
-                    {stat.percentage === null ? '—' : `${stat.percentage}%`}
+                    {formatAttendancePercentage(stat.percentage)}
                   </td>
                 </tr>
               ))}
