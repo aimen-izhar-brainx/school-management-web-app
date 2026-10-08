@@ -2,7 +2,9 @@ import { Camera, Check, CircleCheck, LockKeyhole, UserRound, X } from 'lucide-re
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import type { AuthUser } from '../lib/auth'
 import { meetsPasswordRules, passwordRules, scorePassword } from '../lib/password'
+import { isValidEmail } from '../lib/validators'
 import { DashboardShell } from './DashboardShell'
+import { Input } from './Input'
 import { PasswordField } from './PasswordField'
 
 interface ProfilePageProps {
@@ -61,7 +63,7 @@ export function ProfilePage({ user, onBack, onSignOut, onProfileUpdated }: Profi
       setInfoError('Please enter your name.')
       return
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+    if (!isValidEmail(email)) {
       setInfoError('Please enter a valid email address.')
       return
     }
@@ -193,51 +195,32 @@ export function ProfilePage({ user, onBack, onSignOut, onProfileUpdated }: Profi
               )}
 
               <form onSubmit={handleSaveInfo} className="mt-8 space-y-4" noValidate>
-                <div>
-                  <label htmlFor="profile-name" className="block text-sm font-medium text-slate-700">
-                    Full name
-                  </label>
-                  <input
-                    id="profile-name"
-                    name="name"
-                    type="text"
-                    autoComplete="name"
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    className="mt-1.5 block w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                  />
-                </div>
+                <Input
+                  id="profile-name"
+                  label="Full name"
+                  autoComplete="name"
+                  value={name}
+                  onChange={setName}
+                />
 
-                <div>
-                  <label htmlFor="profile-email" className="block text-sm font-medium text-slate-700">
-                    Email address
-                  </label>
-                  <input
-                    id="profile-email"
-                    name="email"
-                    type="email"
-                    autoComplete="email"
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    className="mt-1.5 block w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                  />
-                </div>
+                <Input
+                  id="profile-email"
+                  label="Email address"
+                  type="email"
+                  autoComplete="email"
+                  value={email}
+                  onChange={setEmail}
+                />
 
-                <div>
-                  <label htmlFor="profile-phone" className="block text-sm font-medium text-slate-700">
-                    Phone number
-                  </label>
-                  <input
-                    id="profile-phone"
-                    name="phone"
-                    type="tel"
-                    autoComplete="tel"
-                    value={phone}
-                    onChange={(event) => setPhone(event.target.value)}
-                    placeholder="+1 (555) 123-4567"
-                    className="mt-1.5 block w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                  />
-                </div>
+                <Input
+                  id="profile-phone"
+                  label="Phone number"
+                  type="tel"
+                  autoComplete="tel"
+                  value={phone}
+                  onChange={setPhone}
+                  placeholder="+1 (555) 123-4567"
+                />
 
                 {infoError && (
                   <p role="alert" className="rounded-lg bg-red-50 px-3.5 py-2.5 text-sm text-red-600">

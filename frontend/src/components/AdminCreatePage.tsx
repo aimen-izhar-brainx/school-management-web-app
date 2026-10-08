@@ -1,7 +1,10 @@
 import { CircleCheck, GraduationCap, UserRound, Users } from 'lucide-react'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import type { AuthUser } from '../lib/auth'
+import { isValidEmail } from '../lib/validators'
 import { DashboardShell } from './DashboardShell'
+import { Input } from './Input'
+import { Select } from './Select'
 
 interface AdminCreatePageProps {
   user: AuthUser
@@ -12,8 +15,6 @@ interface AdminCreatePageProps {
 }
 
 export type PersonTab = 'teacher' | 'student' | 'parent'
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 const tabs: { id: PersonTab; label: string; icon: typeof Users; activeClasses: string; badgeClasses: string }[] = [
   {
@@ -144,7 +145,7 @@ export function AdminCreatePage({ user, initialTab, onBack, onSignOut }: AdminCr
       setTeacherError('Please enter the teacher’s full name.')
       return
     }
-    if (!EMAIL_PATTERN.test(teacherForm.email.trim())) {
+    if (!isValidEmail(teacherForm.email)) {
       setTeacherError('Please enter a valid email address.')
       return
     }
@@ -180,7 +181,7 @@ export function AdminCreatePage({ user, initialTab, onBack, onSignOut }: AdminCr
       setParentError('Please enter the parent’s full name.')
       return
     }
-    if (!EMAIL_PATTERN.test(parentForm.email.trim())) {
+    if (!isValidEmail(parentForm.email)) {
       setParentError('Please enter a valid email address.')
       return
     }
@@ -276,14 +277,14 @@ function TeacherFormSection({
       </p>
 
       <form onSubmit={onSubmit} className="mt-8 space-y-4" noValidate>
-        <TextField
+        <Input
           id="teacher-name"
           label="Full name"
           autoComplete="name"
           value={form.fullName}
           onChange={(value) => onChange('fullName', value)}
         />
-        <TextField
+        <Input
           id="teacher-email"
           label="Email address"
           type="email"
@@ -291,7 +292,7 @@ function TeacherFormSection({
           value={form.email}
           onChange={(value) => onChange('email', value)}
         />
-        <TextField
+        <Input
           id="teacher-phone"
           label="Phone number"
           type="tel"
@@ -300,27 +301,27 @@ function TeacherFormSection({
           value={form.phone}
           onChange={(value) => onChange('phone', value)}
         />
-        <TextField
+        <Input
           id="teacher-employee-id"
           label="Employee ID"
           value={form.employeeId}
           onChange={(value) => onChange('employeeId', value)}
         />
-        <TextField
+        <Input
           id="teacher-subject"
           label="Subject / Department"
           placeholder="e.g. Mathematics"
           value={form.subject}
           onChange={(value) => onChange('subject', value)}
         />
-        <TextField
+        <Input
           id="teacher-joining-date"
           label="Joining date"
           type="date"
           value={form.joiningDate}
           onChange={(value) => onChange('joiningDate', value)}
         />
-        <SelectField
+        <Select
           id="teacher-gender"
           label="Gender"
           value={form.gender}
@@ -368,61 +369,61 @@ function StudentFormSection({
       </p>
 
       <form onSubmit={onSubmit} className="mt-8 space-y-4" noValidate>
-        <TextField
+        <Input
           id="student-name"
           label="Full name"
           autoComplete="name"
           value={form.fullName}
           onChange={(value) => onChange('fullName', value)}
         />
-        <TextField
+        <Input
           id="student-dob"
           label="Date of birth"
           type="date"
           value={form.dateOfBirth}
           onChange={(value) => onChange('dateOfBirth', value)}
         />
-        <SelectField
+        <Select
           id="student-gender"
           label="Gender"
           value={form.gender}
           onChange={(value) => onChange('gender', value)}
           options={genderOptions}
         />
-        <SelectField
+        <Select
           id="student-grade"
           label="Class / Grade"
           value={form.grade}
           onChange={(value) => onChange('grade', value)}
           options={gradeOptions}
         />
-        <TextField
+        <Input
           id="student-section"
           label="Section"
           placeholder="e.g. A"
           value={form.section}
           onChange={(value) => onChange('section', value)}
         />
-        <TextField
+        <Input
           id="student-roll-number"
           label="Roll number"
           value={form.rollNumber}
           onChange={(value) => onChange('rollNumber', value)}
         />
-        <TextField
+        <Input
           id="student-admission-date"
           label="Admission date"
           type="date"
           value={form.admissionDate}
           onChange={(value) => onChange('admissionDate', value)}
         />
-        <TextField
+        <Input
           id="student-guardian-name"
           label="Parent / Guardian name"
           value={form.guardianName}
           onChange={(value) => onChange('guardianName', value)}
         />
-        <TextField
+        <Input
           id="student-guardian-phone"
           label="Parent / Guardian phone"
           type="tel"
@@ -471,14 +472,14 @@ function ParentFormSection({
       </p>
 
       <form onSubmit={onSubmit} className="mt-8 space-y-4" noValidate>
-        <TextField
+        <Input
           id="parent-name"
           label="Full name"
           autoComplete="name"
           value={form.fullName}
           onChange={(value) => onChange('fullName', value)}
         />
-        <TextField
+        <Input
           id="parent-email"
           label="Email address"
           type="email"
@@ -486,7 +487,7 @@ function ParentFormSection({
           value={form.email}
           onChange={(value) => onChange('email', value)}
         />
-        <TextField
+        <Input
           id="parent-phone"
           label="Phone number"
           type="tel"
@@ -495,14 +496,14 @@ function ParentFormSection({
           value={form.phone}
           onChange={(value) => onChange('phone', value)}
         />
-        <SelectField
+        <Select
           id="parent-relationship"
           label="Relationship to student"
           value={form.relationship}
           onChange={(value) => onChange('relationship', value)}
           options={relationshipOptions}
         />
-        <TextField
+        <Input
           id="parent-student-name"
           label="Student's name"
           placeholder="Who is this parent linked to?"
@@ -544,78 +545,6 @@ function FormMessages({ error, created, noun }: { error: string | null; created:
         </p>
       )}
     </>
-  )
-}
-
-function TextField({
-  id,
-  label,
-  value,
-  onChange,
-  type = 'text',
-  autoComplete,
-  placeholder,
-}: {
-  id: string
-  label: string
-  value: string
-  onChange: (value: string) => void
-  type?: string
-  autoComplete?: string
-  placeholder?: string
-}) {
-  return (
-    <div>
-      <label htmlFor={id} className="block text-sm font-medium text-slate-700">
-        {label}
-      </label>
-      <input
-        id={id}
-        name={id}
-        type={type}
-        autoComplete={autoComplete}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-        className="mt-1.5 block w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-      />
-    </div>
-  )
-}
-
-function SelectField({
-  id,
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  id: string
-  label: string
-  value: string
-  onChange: (value: string) => void
-  options: string[]
-}) {
-  return (
-    <div>
-      <label htmlFor={id} className="block text-sm font-medium text-slate-700">
-        {label}
-      </label>
-      <select
-        id={id}
-        name={id}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="mt-1.5 block w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-      >
-        <option value="">Select&hellip;</option>
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
-    </div>
   )
 }
 

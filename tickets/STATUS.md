@@ -5,7 +5,7 @@
 | T-003 | Migrate dashboard-level pages to DashboardShell | DONE | 1 | |
 | T-004 | Migrate remaining feature pages to DashboardShell | DONE | 1 | |
 | T-005 | Build shared Input/Select primitives and email validator | DONE | 1 | |
-| T-006 | Migrate AdminCreatePage and ProfilePage to shared validator/primitives | TODO | 0 | |
+| T-006 | Migrate AdminCreatePage and ProfilePage to shared validator/primitives | DONE | 1 | |
 | T-007 | De-duplicate attendance table/badge rendering | TODO | 0 | |
 | T-008 | De-duplicate timetable grid rendering | TODO | 0 | |
 | T-009 | Enable frontend TypeScript strict mode | TODO | 0 | |

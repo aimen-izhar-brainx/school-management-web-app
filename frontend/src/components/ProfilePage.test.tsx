@@ -27,8 +27,15 @@ function renderPage(overrides: Partial<Parameters<typeof ProfilePage>[0]> = {}) 
     onProfileUpdated: vi.fn(),
     ...overrides,
   }
-  render(<ProfilePage {...props} />)
-  return props
+  const { container } = render(<ProfilePage {...props} />)
+  return { ...props, container }
+}
+
+/** Submits the single <form> rendered for the currently active (profile) tab. */
+function submitProfileForm(container: HTMLElement) {
+  const form = container.querySelector('form')
+  if (!form) throw new Error('Expected the profile-tab form to be rendered')
+  fireEvent.submit(form)
 }
 
 describe('ProfilePage', () => {
@@ -65,5 +72,52 @@ describe('ProfilePage', () => {
     // this page's current max-w-4xl — a naive migration would silently
     // widen this page's content/form columns.
     expect(heading.closest('.max-w-4xl')).not.toBeNull()
+  })
+})
+
+// Tests for T-006: migrate ProfilePage's inline email regex (in
+// `handleSaveInfo`) to the shared `isValidEmail` validator from T-005.
+//
+// ProfilePage still has its own inline regex today, so these tests exercise
+// the pre-migration component directly. They assert on user-visible behavior
+// (error text, success text) only, so they must keep passing unchanged once
+// the migration routes through the shared validator.
+describe('ProfilePage — T-006 email validation regression (pre-migration)', () => {
+  it('AC-02.3 profile tab: invalid email shows "Please enter a valid email address." on submit', () => {
+    const { container } = renderPage()
+
+    fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'bob@' } })
+    submitProfileForm(container)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Please enter a valid email address.')
+  })
+
+  it('AC-02.4 profile tab: a syntactically valid email shows no email-format error on submit', () => {
+    const { container } = renderPage()
+
+    fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'jamie.new@example.com' } })
+    submitProfileForm(container)
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('success-path (unchanged): valid name+email shows "Your profile has been updated." exactly', () => {
+    const { container } = renderPage()
+
+    fireEvent.change(screen.getByLabelText(/full name/i), { target: { value: 'Jamie Updated' } })
+    fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'jamie.updated@example.com' } })
+    submitProfileForm(container)
+
+    expect(screen.getByText('Your profile has been updated.')).toBeInTheDocument()
+  })
+
+  it('own addition: profile tab preserves name-check-before-email-check order (matches AdminCreatePage tabs, per ticket technical notes)', () => {
+    const { container } = renderPage()
+
+    fireEvent.change(screen.getByLabelText(/full name/i), { target: { value: '   ' } })
+    fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'not-an-email' } })
+    submitProfileForm(container)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Please enter your name.')
   })
 })
