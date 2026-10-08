@@ -4,7 +4,7 @@
 | T-002 | Build shared DashboardShell/PageHeader component | DONE | 2 | |
 | T-003 | Migrate dashboard-level pages to DashboardShell | DONE | 1 | |
 | T-004 | Migrate remaining feature pages to DashboardShell | DONE | 1 | |
-| T-005 | Build shared Input/Select primitives and email validator | TODO | 0 | |
+| T-005 | Build shared Input/Select primitives and email validator | DONE | 1 | |
 | T-006 | Migrate AdminCreatePage and ProfilePage to shared validator/primitives | TODO | 0 | |
 | T-007 | De-duplicate attendance table/badge rendering | TODO | 0 | |
 | T-008 | De-duplicate timetable grid rendering | TODO | 0 | |
