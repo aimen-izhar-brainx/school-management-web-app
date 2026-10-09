@@ -3,6 +3,7 @@ import { useState, type FormEvent } from 'react'
 import {
   DAYS,
   DEFAULT_PERIODS,
+  formatTime,
   INITIAL_TIMETABLES,
   SECTION_OPTIONS,
   SUBJECTS,
@@ -14,6 +15,7 @@ import {
 } from '../data/timetable'
 import type { AuthUser } from '../lib/auth'
 import { DashboardShell } from './DashboardShell'
+import { TimetableBreakRow } from './TimetableBreakRow'
 
 interface TimetablePageProps {
   user: AuthUser
@@ -25,14 +27,6 @@ let periodIdCounter = 100
 function makePeriodId(): string {
   periodIdCounter += 1
   return `p-${periodIdCounter}`
-}
-
-function formatTime(time: string): string {
-  const [hourString, minute] = time.split(':')
-  const hour = Number(hourString)
-  const period = hour >= 12 ? 'PM' : 'AM'
-  const hour12 = hour % 12 === 0 ? 12 : hour % 12
-  return `${hour12}:${minute} ${period}`
 }
 
 /** Admin-only screen for building each section's weekly timetable. UI only — nothing is persisted yet. */
@@ -179,17 +173,7 @@ export function TimetablePage({ user, onBack, onSignOut }: TimetablePageProps) {
                   <tbody>
                     {periods.map((period) => {
                       if (period.isBreak) {
-                        return (
-                          <tr key={period.id} className="border-b border-slate-200 bg-amber-50/60">
-                            <td colSpan={DAYS.length + 1} className="px-3 py-2">
-                              <div className="flex items-center gap-2 text-xs font-medium text-amber-700">
-                                <Coffee className="size-3.5" />
-                                {period.breakLabel ?? 'Break'} &middot; {formatTime(period.startTime)} &ndash;{' '}
-                                {formatTime(period.endTime)}
-                              </div>
-                            </td>
-                          </tr>
-                        )
+                        return <TimetableBreakRow key={period.id} period={period} />
                       }
 
                       const periodRow = grid[period.id] ?? {}

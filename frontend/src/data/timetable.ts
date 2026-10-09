@@ -78,6 +78,15 @@ export function sectionLabel(section: SectionOption): string {
   return `${section.className} - ${section.sectionName}`
 }
 
+/** Formats a 24h "HH:mm" time string (e.g. "14:30") as "2:30 PM". */
+export function formatTime(time: string): string {
+  const [hourString, minute] = time.split(':')
+  const hour = Number(hourString)
+  const period = hour >= 12 ? 'PM' : 'AM'
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12
+  return `${hour12}:${minute} ${period}`
+}
+
 export interface TimetableCell {
   subject: string
   teacherId: string

@@ -1,6 +1,7 @@
 import {
   DAYS,
   DEFAULT_PERIODS,
+  formatTime,
   INITIAL_TIMETABLES,
   SECTION_OPTIONS,
   TEACHERS,
@@ -10,19 +11,12 @@ import {
 } from '../data/timetable'
 import type { AuthUser } from '../lib/auth'
 import { DashboardShell } from './DashboardShell'
+import { TimetableBreakRow } from './TimetableBreakRow'
 
 interface MyTimetablePageProps {
   user: AuthUser
   onBack: () => void
   onSignOut: () => void
-}
-
-function formatTime(time: string): string {
-  const [hourString, minute] = time.split(':')
-  const hour = Number(hourString)
-  const period = hour >= 12 ? 'PM' : 'AM'
-  const hour12 = hour % 12 === 0 ? 12 : hour % 12
-  return `${hour12}:${minute} ${period}`
 }
 
 interface ScheduleCell {
@@ -40,6 +34,8 @@ interface ScheduleCell {
 function useSchedule(user: AuthUser): { grid: Partial<Record<string, Partial<Record<DayId, ScheduleCell>>>>; caption: string } {
   if (user.role === 'student') {
     const section = SECTION_OPTIONS[0]
+    if (!section) return { grid: {}, caption: '' }
+
     const sectionGrid = INITIAL_TIMETABLES[section.id] ?? {}
     const grid: Partial<Record<string, Partial<Record<DayId, ScheduleCell>>>> = {}
 
@@ -105,14 +101,7 @@ export function MyTimetablePage({ user, onBack, onSignOut }: MyTimetablePageProp
           <tbody>
             {DEFAULT_PERIODS.map((period) => {
               if (period.isBreak) {
-                return (
-                  <tr key={period.id} className="border-b border-slate-200 bg-amber-50/60">
-                    <td colSpan={DAYS.length + 1} className="px-3 py-2 text-xs font-medium text-amber-700">
-                      {period.breakLabel ?? 'Break'} &middot; {formatTime(period.startTime)} &ndash;{' '}
-                      {formatTime(period.endTime)}
-                    </td>
-                  </tr>
-                )
+                return <TimetableBreakRow key={period.id} period={period} />
               }
 
               const periodRow = grid[period.id] ?? {}

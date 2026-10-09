@@ -7,7 +7,7 @@
 | T-005 | Build shared Input/Select primitives and email validator | DONE | 1 | |
 | T-006 | Migrate AdminCreatePage and ProfilePage to shared validator/primitives | DONE | 1 | |
 | T-007 | De-duplicate attendance table/badge rendering | DONE | 1 | |
-| T-008 | De-duplicate timetable grid rendering | IN-PROGRESS | 0 | |
+| T-008 | De-duplicate timetable grid rendering | DONE | 1 | |
 | T-009 | Enable frontend TypeScript strict mode | TODO | 0 | |
 | T-010 | Add backend oxlint config | TODO | 0 | |
 | T-011 | Auth service test coverage | TODO | 0 | |
