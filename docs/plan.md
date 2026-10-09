@@ -1,80 +1,190 @@
-# Plan: Codebase Refactor (Deduplication & Best Practices)
+# Plan: Academic Management
 
 ## Tech stack
 
-Only additions — everything else in the existing stack is unchanged.
+Inherited from the existing app — no new dependencies.
 
-| Need | Choice | Reason |
-|---|---|---|
-| Frontend test framework | Vitest + React Testing Library | Vitest is already used by the backend and integrates natively with Vite (the frontend's bundler) — no new test runner to learn |
-| Backend lint config | `.oxlintrc.json` (mirroring frontend's) | Backend already has an `oxlint` lint script but no config file, so it currently runs with defaults only |
-
-Unchanged: React 19 + Vite + TypeScript + Tailwind v4 (frontend), NestJS 12 + Prisma 7 + Postgres + JWT auth (backend), oxlint (both).
-
-CI was considered and explicitly dropped from v1 scope (see Decisions log).
+- **Backend:** NestJS 12 modules + Prisma 7 + Postgres — same pattern as the existing `auth`/`users` modules.
+- **Frontend:** React 19 + Vite + TS + Tailwind v4 — rewires existing mock pages; no calendar/scheduling library needed since periods are fixed and the week is Monday–Friday.
+- **Auth:** reuses the existing JWT (the token payload already carries `role`). Adds a `RolesGuard` + `@Roles()` decorator, which doesn't exist yet.
+- **Testing:** Vitest, same as current setup (`npm run test` in both `backend/` and `frontend/`).
 
 ## Architecture
 
-The only structural change is a new shared UI layer in the frontend. No backend architecture changes.
+**Backend** — new NestJS modules alongside the existing `auth`/`users`:
+- `common/guards/roles.guard.ts` + `@Roles()` decorator — shared, reads `role` from the JWT payload, locks admin-only endpoints.
+- `classes/` module — Class CRUD, nested Section CRUD, subject-to-class assignment.
+- `subjects/` module — global subject catalog CRUD.
+- `timetable/` module — weekly timetable entries per section, conflict validation, plus `GET /timetable/me` for teachers/students.
+
+**Frontend** — rewire existing mock pages to call real APIs instead of local state:
+- `ClassesPage.tsx` → real class/section/subject data.
+- `TimetablePage.tsx` → admin timetable builder, real data.
+- `MyTimetablePage.tsx` → teacher/student read-only view, real data.
+- `frontend/src/lib/http.ts` currently only has `get`/`post` — needs `put`/`patch`/`delete` added.
+
+**Flow:** React SPA → `/api/...` (Vite proxy in dev) → NestJS controllers → Prisma → Postgres. All writes go through `JwtAuthGuard` + `RolesGuard` (admin-only); reads are open to any authenticated role, scoped to the caller for "my timetable".
 
 ```mermaid
-graph TD
-    subgraph Frontend [frontend — React SPA]
-        Pages[Page components<br/>Attendance, Timetable, Notices, Profile, Admin...]
-        Shared[Shared UI layer — NEW<br/>DashboardShell/PageHeader, Input/Select/Table, validators]
-        Pages --> Shared
+flowchart LR
+    subgraph Frontend [React SPA]
+        CP[ClassesPage]
+        TP[TimetablePage - admin builder]
+        MP[MyTimetablePage - read-only]
     end
-    Frontend -- REST, JWT cookies --> Backend
-    subgraph Backend [backend — NestJS]
-        Auth[Auth module]
-        Users[Users module]
-        Mail[Mail module]
+
+    subgraph Backend [NestJS - /api]
+        G[JwtAuthGuard + RolesGuard]
+        CM[classes module]
+        SM[subjects module]
+        TM[timetable module]
     end
-    Backend --> DB[(Postgres via Prisma)]
+
+    DB[(Postgres via Prisma)]
+
+    CP --> G
+    TP --> G
+    MP --> G
+    G --> CM
+    G --> SM
+    G --> TM
+    CM --> DB
+    SM --> DB
+    TM --> DB
 ```
 
 ## Data model
 
-No changes. Schema stays exactly as-is, since wiring real APIs/DB for the mock-data pages is out of scope for this refactor:
+```prisma
+model Class {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-- **User** — id, name, email, passwordHash, role (admin/teacher/student/parent), createdAt, updatedAt
-- **RefreshToken** — id, tokenHash, userId, longLived, expiresAt, revokedAt, createdAt
-- **PasswordResetToken** — id, tokenHash, userId, expiresAt, usedAt, createdAt
+  sections      Section[]
+  classSubjects ClassSubject[]
+}
 
-Attendance, timetable, notices, and classes remain frontend-only mock data (`frontend/src/data/*.ts`) with no backing tables.
+model Section {
+  id             String   @id @default(cuid())
+  name           String
+  classId        String
+  class          Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+  classTeacherId String?
+  classTeacher   User?    @relation("SectionClassTeacher", fields: [classTeacherId], references: [id])
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  students         User[]           @relation("StudentSection")
+  timetableEntries TimetableEntry[]
+
+  @@unique([classId, name])
+}
+
+model Subject {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  classSubjects ClassSubject[]
+}
+
+model ClassSubject {
+  id        String   @id @default(cuid())
+  classId   String
+  class     Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subjectId String
+  subject   Subject  @relation(fields: [subjectId], references: [id])
+  teacherId String?
+  teacher   User?    @relation("SubjectTeacher", fields: [teacherId], references: [id])
+
+  @@unique([classId, subjectId])
+}
+
+model Period {
+  id        String  @id @default(cuid())
+  order     Int     @unique
+  startTime String
+  endTime   String
+  isBreak   Boolean @default(false)
+  label     String?
+
+  timetableEntries TimetableEntry[]
+}
+
+enum DayOfWeek {
+  mon
+  tue
+  wed
+  thu
+  fri
+}
+
+model TimetableEntry {
+  id        String    @id @default(cuid())
+  sectionId String
+  section   Section   @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  periodId  String
+  period    Period    @relation(fields: [periodId], references: [id])
+  dayOfWeek DayOfWeek
+  subjectId String
+  subject   Subject   @relation(fields: [subjectId], references: [id])
+  teacherId String
+  teacher   User      @relation("EntryTeacher", fields: [teacherId], references: [id])
+
+  @@unique([sectionId, periodId, dayOfWeek])
+  @@unique([teacherId, periodId, dayOfWeek])
+}
+```
+
+`User` gets one addition: a nullable `sectionId` (+ relation `"StudentSection"`) so a student account can be linked to the section they belong to. This isn't full roster/enrollment management (that stays out of scope) — it's the minimal field needed for "students view their timetable" to work. Admin sets it from the Sections screen.
+
+`Period` is seeded once via a migration seed script (fixed 8:00 AM–1:00 PM schedule, periods + breaks) — not user-editable in v1.
 
 ## Milestones
 
-- **M1 — Shared layout.** Extract a `DashboardShell`/`PageHeader` component (mirroring the existing `AuthShell` pattern) and migrate all 10 pages to use it.
-  *See/test: every page renders identically, with far less repeated markup; sign-out works everywhere.*
+**M1 — Foundation + Class management**
+- Add `RolesGuard` + `@Roles()` decorator (backend)
+- `Class` model + CRUD API
+- Rewire `ClassesPage` class list (create/rename/delete) to real data
+- Test: log in as admin, create/edit/delete a class, refresh — it persists. Log in as teacher/student, confirm write attempts are blocked.
 
-- **M2 — Shared form primitives + validator.** Extract `Input`/`Select` components and one shared email/password validator utility; replace the two inconsistent regexes currently in `AdminCreatePage.tsx` and `ProfilePage.tsx`.
-  *See/test: forms on both pages still validate correctly.*
+**M2 — Sections + Subjects**
+- `Section`, `Subject`, `ClassSubject` models + CRUD APIs
+- Full `ClassesPage` wired: sections within a class, subject catalog, one-teacher-per-subject assignment
+- Add `sectionId` to `User`, simple admin UI to assign a student to a section
+- Test: create sections under a class, assign subjects + teachers, assign a student user to a section.
 
-- **M3 — De-duplicate table/list logic.** Shared rendering for `AttendancePage` ↔ `MyAttendancePage`, and shared grid logic for `TimetablePage` ↔ `MyTimetablePage`.
-  *See/test: both page pairs still display the same data, badges, and empty states as before.*
+**M3 — Timetable builder**
+- `Period` model + seed data (8:00–1:00, fixed)
+- `TimetableEntry` model + CRUD API with conflict validation (clear error message backed by the DB unique constraint)
+- Rewire `TimetablePage` (admin builder) to real data
+- Test: build a weekly timetable for a section, try to double-book a teacher across two sections at the same slot, see it rejected.
 
-- **M4 — Frontend strict mode.** Enable `strict` in `frontend/tsconfig.app.json`; fix whatever type errors it surfaces.
-  *See/test: `tsc -b` passes clean; app still builds and runs.*
-
-- **M5 — Backend hygiene.** Add `.oxlintrc.json` for the backend; add tests for `auth.service` (login, refresh, forgot/reset password).
-  *See/test: `npm run lint` and `npm run test` pass in `backend/`, with real auth coverage.*
+**M4 — Read-only views**
+- `GET /timetable/me` endpoint
+- Rewire `MyTimetablePage` for teachers (their taught slots) and students (their section's timetable)
+- Test: log in as a teacher and a student, each sees only their own schedule, no edit controls visible.
 
 ## Technical risks
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| Strict-mode rollout (M4) surfaces many pre-existing type errors | Could expand scope/time beyond initial estimate | Accepted as a known trade-off; fix incrementally, file by file |
-| Writing auth tests (M5) requires mocking JWT/bcrypt/email flows | Time-consuming to do properly | Start with critical paths (login, refresh) before edge cases |
-| No frontend tests exist yet, so refactoring shared UI (M1-M3) could regress working pages — especially the real auth flow | Could break login/reset-password | Manually verify every page after each milestone; consider a minimal smoke test for the auth flow before touching `AuthShell`-adjacent code |
-| No CI to catch regressions automatically (dropped from scope) | Regressions rely on manual verification only | Accepted trade-off per user decision; revisit if pain resurfaces |
+| Risk | Mitigation |
+|---|---|
+| No `RolesGuard` exists today — admin-only enforcement is currently frontend-only | Build and test the guard in M1 before any other write endpoint ships |
+| Teacher double-booking conflict logic | Enforced at two levels: DB unique constraint (`teacherId` + `periodId` + `dayOfWeek`) as the source of truth, plus a service-layer check for a clear user-facing error message |
+| Linking students to sections isn't in the original brainstorm scope | Scoped to the minimum: one nullable `sectionId` field on `User`, set by admin from the Sections screen — no roster/enrollment workflow built |
+| Rewiring mock frontend pages while also improving UI/flow | Each milestone rewires one page at a time against real data, so regressions are caught incrementally rather than in one large rewrite |
 
 ## Decisions log
 
 | Decision | Reason |
 |---|---|
-| Frontend de-duplication (M1-M3) comes before backend/hygiene work (M4-M5) | User's codebase pain point is the duplicated frontend pages; fix the stated problem first |
-| CI dropped entirely from v1 scope | User explicitly deprioritized it mid-planning; not a current priority |
-| Vitest chosen for frontend tests | Already used by backend; pairs natively with Vite |
-| No new backend entities/APIs | Wiring real APIs/DB for mock-data pages is explicitly out of scope (see brainstorm.md) |
-| Data model left unchanged | No new features in this refactor, only structural cleanup of existing code |
+| Reuse existing NestJS/Prisma/React stack, no new libraries | Fixed periods + Mon–Fri schedule don't need a scheduling library; staying consistent with the existing codebase |
+| One teacher per subject per class (not multiple) | Confirmed with user during brainstorm |
+| Fixed, school-wide periods (not per-class configurable) | Confirmed with user during brainstorm; simplifies `Period` to one seeded table |
+| School day is 8:00 AM–1:00 PM, Monday–Friday | Confirmed with user during brainstorm |
+| Conflict detection is automatic, not just advisory | Confirmed with user during brainstorm; implemented via DB unique constraint |
+| Add nullable `User.sectionId` for students | Necessary gap found during planning — without it, students have no way to be linked to a timetable |
+| Single school, no multi-tenant data model | Confirmed with user during brainstorm |
+| Rework mock UI/flow, not just reskin | Confirmed with user during brainstorm |

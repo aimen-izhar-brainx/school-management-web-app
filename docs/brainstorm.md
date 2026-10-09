@@ -1,42 +1,57 @@
-# Brainstorm: Codebase Refactor (Deduplication & Best Practices)
+# Brainstorm: Academic Management
 
 ## Problem
-No active bugs have surfaced yet, but the code "doesn't feel clean." The goal is to bring the codebase in line with SOLID principles and general best practices before it grows further — this is preventative hygiene work, not a fix for a known failure.
+
+Classes, sections, subjects, and timetables are currently managed manually (Excel/paper). This is error-prone and there is no system of record for this data in the app today.
 
 ## Users
-Solo developer. No other developers currently work in this codebase, so there's no team-coordination overhead to design around.
+
+- **Admin** — full CRUD on classes, sections, subjects, and the timetable. Only role that can create or edit anything in this feature.
+- **Teachers** — read-only access to their own timetable.
+- **Students** — read-only access to their own class/section timetable.
+
+No other role can make changes.
 
 ## MVP features
-Priority order: frontend de-duplication first, then backend/project hygiene.
 
-**1. Frontend de-duplication**
-- Shared layout/header component for the 10 new pages (Attendance, Classes, Timetable, Notices, Profile, Admin pages, etc.), following the pattern `AuthShell.tsx` already sets for the auth flow
-- Shared `Input` / `Select` / `Table` primitives to remove the repeated Tailwind class strings scattered across pages
-- One shared email/password validator utility, replacing the two inconsistent regexes (`AdminCreatePage.tsx` vs `ProfilePage.tsx`)
-- De-duplicate repeated table/list rendering logic (status badges, empty states) between `AttendancePage` ↔ `MyAttendancePage`, and the grid logic between `TimetablePage` ↔ `MyTimetablePage`
+- **Class management** — Create/Edit/Delete classes (e.g., "Grade 1", "Grade 10").
+- **Section management** — Create/Edit/Delete sections within a class (e.g., Section A, B, C).
+- **Subject management**:
+  - Create subjects
+  - Assign subjects to classes
+  - Assign exactly one teacher per subject (per class/section)
+- **Timetable builder**:
+  - Weekly timetable per class/section, Monday–Friday
+  - School day runs 8:00 AM–1:00 PM; periods are fixed/school-wide (exact number and duration of periods to be finalized during `/plan`)
+  - Admin assigns subject + teacher to a day/time slot
+  - Automatic conflict detection — blocks assigning a teacher to two classes/sections at the same day/time slot
+- **Read-only views** — Teachers and students can view their respective timetables; no edit access.
+- Single school only (no multi-tenant data model needed).
+- Rework the existing mock-only frontend pages (`ClassesPage.tsx`, `TimetablePage.tsx`, `MyTimetablePage.tsx`) into real, backend-wired pages. UI/flow can be improved where it clearly helps, not just reskinned.
 
-**2. Backend & project hygiene**
-- Enable `strict` mode in frontend `tsconfig.app.json` and fix what it surfaces
-- Add missing `oxlint` config for the backend (it has a lint script but no `.oxlintrc`)
-- Add basic tests for the backend auth module (login, refresh, forgot/reset password)
+## Out of scope (v1)
 
-## Out of scope
-- Building real backend APIs/DB models for attendance, timetable, notices, classes, admin-create — these pages stay mock-data-only for now
-- Any new product features
-- Multi-developer tooling or process (solo project)
-- CI (dropped from v1 scope — not a priority right now)
+- AI/auto-generated timetable suggestions
+- Academic year/term/semester management (one active timetable per class/section, no history across terms)
+- Notifications/alerts when the timetable changes
+- Teacher substitution/leave handling
+- Bulk import (CSV) of classes/subjects
+- Audit log/history of timetable changes
 
 ## Risks and challenges
 
 | Risk | Impact | Idea to reduce it |
 |---|---|---|
-| Strict-mode rollout surfaces many pre-existing type errors | Could expand scope/time beyond initial estimate | Accepted as acceptable; fix incrementally, file by file |
-| Writing auth tests requires mocking JWT/bcrypt/email flows | Time-consuming to do properly | Start with critical paths (login, refresh) before edge cases |
-| No frontend tests exist yet, so refactoring shared UI (header, inputs) could regress working pages — especially the real auth flow | Could break login/reset-password in production-like use | Manually verify every page after refactor; consider a minimal smoke test for the auth flow before touching `AuthShell` |
-| Legal/privacy, cost, competition | N/A | Internal solo refactor, no new data handling introduced |
+| No backend data models exist yet (`Class`, `Section`, `Subject`, `Timetable`) — this is a full buildout, not a thin slice | Medium-high implementation effort | Plan the data model carefully up front; deliver in phased tickets |
+| No `RolesGuard` enforcing admin-only writes server-side today (role check currently lives only on the frontend) | Security gap — a teacher/student could call write APIs directly today | Build a proper backend `RolesGuard`/decorator as part of this feature |
+| Conflict-detection logic (checking teacher availability across all classes/sections on every write) | Adds query/validation complexity | Validate at the service layer; index by teacher + day + time slot |
+| Rewiring existing mock frontend pages to real APIs while also improving UI/flow | Risk of scope creep beyond a straightforward CRUD build | Keep redesign targeted to specific usability gaps, not a full overhaul |
+| Timeline | Flexible — low risk | — |
 
 ## Open questions
-None outstanding — priority order was confirmed by the user; CI was later dropped from v1 scope during planning.
+
+- Exact number and duration of periods within the 8:00 AM–1:00 PM school day (to be finalized in `/plan`).
 
 ## Doability verdict
-**Go.** Low technical risk — this is mostly extraction and configuration work, not new business logic. The backend auth module is already solid (hashed tokens, bcrypt, guards, validation pipe). No deadline pressure, solo project, user has accepted that strict-mode/test work may expand scope somewhat.
+
+**Go with changes.** Technically straightforward (standard CRUD + scheduling conflict checks), but it is a genuine full-stack build: new Prisma models, new NestJS modules, backend role enforcement that doesn't exist yet, and rewired/redesigned frontend pages. Recommend careful data-model planning before coding begins.

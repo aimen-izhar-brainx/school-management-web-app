@@ -1,13 +1,16 @@
 | Ticket | Title | Status | Tries | Note |
 |---|---|---|---|---|
-| T-001 | Frontend test tooling setup | DONE | 1 | |
-| T-002 | Build shared DashboardShell/PageHeader component | DONE | 2 | |
-| T-003 | Migrate dashboard-level pages to DashboardShell | DONE | 1 | |
-| T-004 | Migrate remaining feature pages to DashboardShell | DONE | 1 | |
-| T-005 | Build shared Input/Select primitives and email validator | DONE | 1 | |
-| T-006 | Migrate AdminCreatePage and ProfilePage to shared validator/primitives | DONE | 1 | |
-| T-007 | De-duplicate attendance table/badge rendering | DONE | 1 | |
-| T-008 | De-duplicate timetable grid rendering | DONE | 1 | |
-| T-009 | Enable frontend TypeScript strict mode | DONE | 1 | |
-| T-010 | Add backend oxlint config | DONE | 1 | |
-| T-011 | Auth service test coverage | DONE | 1 | |
+| T-012 | RolesGuard + @Roles decorator (backend infrastructure) | TODO | 0 | |
+| T-013 | Class CRUD API (backend) | TODO | 0 | |
+| T-014 | Wire ClassesPage class list to real API (frontend) | TODO | 0 | |
+| T-015 | Section CRUD + class-teacher assignment (backend) | TODO | 0 | |
+| T-016 | Subject catalog + class-subject-teacher assignment (backend) | TODO | 0 | |
+| T-017 | Link students to sections (backend) | TODO | 0 | |
+| T-018 | Wire Sections UI (frontend) | TODO | 0 | |
+| T-019 | Wire Subjects + student assignment UI (frontend) | TODO | 0 | |
+| T-020 | Fixed Period schedule (backend) | TODO | 0 | |
+| T-021 | TimetableEntry CRUD API (backend, no conflict checking yet) | TODO | 0 | |
+| T-022 | Teacher double-booking conflict detection (backend) | TODO | 0 | |
+| T-023 | Wire TimetablePage admin builder (frontend) | TODO | 0 | |
+| T-024 | GET /timetable/me endpoint (backend) | TODO | 0 | |
+| T-025 | Wire MyTimetablePage for teachers and students (frontend) | TODO | 0 | |
