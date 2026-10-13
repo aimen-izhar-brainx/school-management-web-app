@@ -9,5 +9,7 @@ export default defineConfig({
     globals: true,
     root: './',
     include: ['**/*.spec.ts'],
+    // Spec files share one real Postgres DB, so run files serially to avoid contention/timeouts.
+    fileParallelism: false,
   },
 });

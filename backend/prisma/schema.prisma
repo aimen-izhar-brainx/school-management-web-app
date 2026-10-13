@@ -27,11 +27,15 @@ model User {
   role         Role
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  sectionId    String?
+  section      Section? @relation("StudentSection", fields: [sectionId], references: [id], onDelete: SetNull)
 
   refreshTokens        RefreshToken[]
   passwordResets       PasswordResetToken[]
   classTeacherSections Section[]            @relation("SectionClassTeacher")
   taughtClassSubjects  ClassSubject[]       @relation("SubjectTeacher")
+
+  @@index([sectionId])
 }
 
 model RefreshToken {
@@ -78,6 +82,7 @@ model Section {
   classTeacher   User?    @relation("SectionClassTeacher", fields: [classTeacherId], references: [id], onDelete: SetNull)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+  students       User[]   @relation("StudentSection")
 
   @@unique([classId, name])
   @@index([classTeacherId])

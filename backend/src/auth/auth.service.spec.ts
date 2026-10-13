@@ -18,6 +18,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     email: 'ada@example.com',
     passwordHash: 'hashed-password',
     role: 'admin' as Role,
+    sectionId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,

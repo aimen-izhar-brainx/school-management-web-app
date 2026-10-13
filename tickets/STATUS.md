@@ -5,7 +5,7 @@
 | T-014 | Wire ClassesPage class list to real API (frontend) | DONE | 3 | user: hide section/subject counts until M2 (AC-05.3 added) |
 | T-015 | Section CRUD + class-teacher assignment (backend) | DONE | 1 | |
 | T-016 | Subject catalog + class-subject-teacher assignment (backend) | DONE | 1 | |
-| T-017 | Link students to sections (backend) | TODO | 0 | |
+| T-017 | Link students to sections (backend) | DONE | 1 | |
 | T-018 | Wire Sections UI (frontend) | TODO | 0 | |
 | T-019 | Wire Subjects + student assignment UI (frontend) | TODO | 0 | |
 | T-026 | Subject rename + delete (backend) | TODO | 0 | |
