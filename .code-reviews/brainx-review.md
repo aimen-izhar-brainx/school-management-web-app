@@ -1,42 +1,42 @@
 ---
-diff_hash: 782bc56a71677bdcef2a51c1aa011407638172bd661f5e5d9a5e8d882d9e9a7c
-reviewed_at: 2026-10-13T07:43:43Z
+diff_hash: 992e6059cb20df82ca87927093250bec11edac84f8b896095beb705246b357d5
+reviewed_at: 2026-10-13T08:00:00Z
 ---
 
 ## Summary
 
-T-014: `ClassesPage` now loads, creates, renames and deletes classes through the `/classes` API (via new `api.patch` / `api.delete` helpers in `http.ts`) instead of local mock data. It adds loading/error/empty states, in-flight guards for rename and delete, a delete confirmation, and hides write controls for non-admins. Section/subject counts are removed from the list until M2. Ticket and status docs are updated to match. Stack: React 19 + Vite + TypeScript + Tailwind (frontend only; no backend changes in this diff, so no cross-repo contract risk).
+Stack: NestJS + Prisma. Adds the `Section` model/migration (unique `(classId, name)`, FK to Class with cascade, FK to User with SET NULL, index on `classTeacherId`), an admin-only `SectionsController`/`SectionsService` (create, rename, set class teacher, delete) nested under `classes/:classId/sections`, and an admin-only `GET /users?role=teacher|student` list that uses an explicit `select` (no `passwordHash` leak). Guards, DTO validation, ownership scoping (`id` + `classId`), duplicate/race handling (pre-check plus P2002 fallback) and error shapes are consistent with the existing `ClassesService`. Backend-only change; no frontend contract change in this diff.
 
 ## Findings
 
 ### Critical (0)
 
-### High (0)
+### High (1)
+- **backend/src/users/users.service.ts:22** — `listByRole` runs an unbounded `findMany` with no pagination or limit. `role=student` will grow with the school and the whole table is returned on every call. *(performance)*
+  - status: skipped
+  - dev_reasoning: Deferred by product decision. The admin-only teacher/student pickers (UC-08/UC-10/UC-11) need the full list for a single school, and the user explicitly declined student-picker search during /use-cases, so a paginated API would have no UI to page it. The response is limited to id/name/email/role. Revisit together with picker search if student counts grow.
+  - ai_reasoning: Add `take`/`skip` (or cursor) via a pagination DTO, or at minimum a hard cap, and return the project's paginated shape. A teacher picker may stay small, but the endpoint also accepts `student`.
 
-### Medium (2)
-- **frontend/src/components/ClassesPage.tsx:334** — Rename and delete failures (including the "This class no longer exists." 404 message required by UC-02-E2 / UC-03-E1) are written to `classNameError`, which is only rendered inside the "New class" form in the sidebar. The user sees the error under the add-class input, far from the Rename/Delete controls they just used, and it reads as if the add form failed. *(correctness / UX)*
-  - status: open
-  - dev_reasoning: N/A
-  - ai_reasoning: `commitRenameClass` (line 177) and `handleDeleteClass` (line 195) reuse the shared `classNameError` state. Use a separate error state rendered next to the class header/rename form, or otherwise scope the error to the action that produced it.
-- **frontend/src/components/ClassesPage.tsx:135** — `handleAddClass` has no in-flight guard or disabled/loading state on the submit button, unlike rename and delete. A double click or Enter-key repeat sends duplicate POSTs; the second can fail with a confusing "already exists" error right after the first succeeded. *(correctness / consistency)*
-  - status: open
-  - dev_reasoning: N/A
-  - ai_reasoning: Add an `isCreating` flag mirroring `isSavingRename` / `isDeleting`, bail out early when set, and disable the add button while the request is pending.
+### Medium (0)
 
-### Low (2)
-- **frontend/src/components/ClassesPage.tsx:119** — The load effect and `handleClassGone` have no stale/unmount guard, and when a resync after a 404 fails, `loadStatus` flips to `'error'` while the stale list (still containing the deleted class) remains rendered under the error message. *(correctness / robustness)*
-  - status: open
-  - dev_reasoning: N/A
-  - ai_reasoning: Add an ignore flag or AbortController to the effect, and decide explicitly what the UI should show when a resync fails (for example, keep the previous list but avoid presenting it as current).
-- **frontend/src/components/ClassesPage.tsx:313** — The `{canManageClasses && (` wrapper around the add-class `<form>` was added without re-indenting the form body, so the JSX is misformatted and inconsistent with the rest of the file. *(style)*
-  - status: open
-  - dev_reasoning: N/A
-  - ai_reasoning: Run the project formatter or re-indent the wrapped block.
+### Low (1)
+- **backend/src/classes/sections.controller.ts:23** — Route `:id/class-teacher` uses a hyphen; the NestJS convention for this review is underscores for multi-word segments (`class_teacher`). *(consistency)*
+  - status: ignored
+  - dev_reasoning: Kebab-case is the standard REST path convention and matches the ticket spec and the existing routes in this codebase (e.g. auth's forgot-password/reset-password). No underscore convention exists in the project.
+  - ai_reasoning: Cosmetic and only matters if the project adopts the underscore convention; rename before a frontend depends on it.
 
 ## Reviewed files
-- .code-reviews/brainx-review.md (deleted in staging; previous review artifact, skipped)
-- frontend/src/components/ClassesPage.test.tsx
-- frontend/src/components/ClassesPage.tsx
-- frontend/src/lib/http.ts
-- tickets/STATUS.md
-- tickets/T-014.md
+- backend/prisma/migrations/20261013074805_add_section/migration.sql
+- backend/prisma/schema.prisma
+- backend/src/classes/classes.module.ts
+- backend/src/classes/dto/class-teacher.dto.ts
+- backend/src/classes/dto/section-name.dto.ts
+- backend/src/classes/sections.controller.ts
+- backend/src/classes/sections.service.ts
+- backend/src/classes/sections.spec.ts (skimmed, tests)
+- backend/src/users/dto/list-users.dto.ts
+- backend/src/users/users.controller.spec.ts (skimmed, tests)
+- backend/src/users/users.controller.ts
+- backend/src/users/users.module.ts
+- backend/src/users/users.service.ts
+- tickets/STATUS.md, tickets/T-015.md (docs, not reviewed)

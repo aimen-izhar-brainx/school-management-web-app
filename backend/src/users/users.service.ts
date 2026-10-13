@@ -17,4 +17,13 @@ export class UsersService {
   create(data: { name: string; email: string; passwordHash: string; role: Role }): Promise<User> {
     return this.prisma.user.create({ data: { ...data, email: data.email.trim().toLowerCase() } });
   }
+
+  // Explicit select: never expose passwordHash or other secrets.
+  listByRole(role: Role) {
+    return this.prisma.user.findMany({
+      where: { role },
+      select: { id: true, name: true, email: true, role: true },
+      orderBy: { name: 'asc' },
+    });
+  }
 }
