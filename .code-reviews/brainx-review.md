@@ -1,11 +1,11 @@
 ---
-diff_hash: aad1c6646d2f603decb01a4d7c451d008cda8ade39559c392b7570581e25fbaa
-reviewed_at: 2026-10-13T00:00:00Z
+diff_hash: dff4ec300782c238d82cf5ad26335e115ea11f2d3d0af7c24d6c7c7226d35e32
+reviewed_at: 2026-10-13T07:31:31Z
 ---
 
 ## Summary
 
-Adds `@Roles()` decorator and `RolesGuard` (T-012) in `backend/src/common/`, with an integration-style spec composing `JwtAuthGuard` + `RolesGuard` on a throwaway controller. Marks T-012 DONE in tickets. Removes the previous review file. Stack: NestJS (Prisma). Guard logic is correct: fails closed when a role is required but `user.role` is missing, uses `getAllAndOverride` for handler/class metadata. Placement in `common/guards` and `common/decorators` matches conventions.
+Adds the Class model + migration and a `classes` NestJS module (list for any authenticated user; create/rename/delete admin-only via JwtAuthGuard + RolesGuard), a trimming/validating DTO, and an integration spec against real Postgres. Auth, validation, error mapping (P2002/P2025) and select-limited responses are sound. Stack: NestJS (Prisma). Ticket/STATUS markdown changes are doc-only.
 
 ## Findings
 
@@ -14,21 +14,30 @@ Adds `@Roles()` decorator and `RolesGuard` (T-012) in `backend/src/common/`, wit
 ### High (0)
 
 ### Medium (1)
-- **backend/src/common/decorators/roles.decorator.ts:4** — `Roles` accepts `...roles: string[]`, so a typo such as `@Roles('admn')` compiles and silently locks every user out of the route (guard fails closed), and nothing ties it to the Prisma `Role` enum (admin/teacher/student/parent). *(maintainability)*
+- **backend/prisma/schema.prisma:59** — The `@unique` on `Class.name` (and the migration's `Class_name_key` index) is case-sensitive, but the business rule and the service pre-check are case-insensitive. Two concurrent requests for "Math" and "math" both pass `assertNameFree` and both insert successfully, so the DB constraint does not back the case-insensitive rule (the P2002 fallback only catches exact-case races). *(correctness)*
   - status: open
   - dev_reasoning: N/A
-  - ai_reasoning: Type the parameter as the Prisma-generated `Role` (or a shared union) so invalid roles fail at compile time. `JwtPayload.role` is also `string`, so consider typing it the same way. Cheap to fix now before T-013+ add many usages.
+  - ai_reasoning: Enforce at DB level with a unique index on `lower(name)` (raw SQL in the migration) or store a normalized `nameKey` column with the unique constraint. The race test only covers identical-case names, so it doesn't catch this.
 
-### Low (1)
-- **backend/src/common/guards/roles.guard.spec.ts:36** — Spec covers handler-level `@Roles` only; the class-level metadata path (`getAllAndOverride` with `getClass()`) and the "no `@Roles` → allow" branch of the guard are untested. *(test-coverage)*
+### Low (2)
+- **backend/src/classes/classes.service.ts:12** — `list()` is an unbounded `findMany` with no pagination. *(performance)*
+  - status: skipped
+  - dev_reasoning: Intentional. AC-05.2 requires the list endpoint to return all classes, and a single school has at most a few dozen. Pagination is not in the v1 scope.
+  - ai_reasoning: Class counts are small and AC-05.2 requires returning all, so impact is minimal; consider a sane cap or note the intentional choice.
+- **backend/src/classes/classes.controller.spec.ts:44** — `(prisma as any).class` is used repeatedly although `PrismaService` already exposes a typed `class` delegate (the service uses it without a cast). *(maintainability)*
   - status: open
   - dev_reasoning: N/A
-  - ai_reasoning: Add a route without `@Roles` and a class-level `@Roles` case to the throwaway controllers so both branches of the guard are pinned down.
+  - ai_reasoning: Drop the `as any` casts so tests get type checking on the model.
 
 ## Reviewed files
-- .code-reviews/brainx-review.md (deleted; prior review)
-- backend/src/common/decorators/roles.decorator.ts
-- backend/src/common/guards/roles.guard.ts
-- backend/src/common/guards/roles.guard.spec.ts
-- tickets/STATUS.md
-- tickets/T-012.md
+- backend/prisma/migrations/20261013072948_add_class/migration.sql
+- backend/prisma/schema.prisma
+- backend/src/app.module.ts
+- backend/src/classes/classes.controller.spec.ts
+- backend/src/classes/classes.controller.ts
+- backend/src/classes/classes.module.ts
+- backend/src/classes/classes.service.ts
+- backend/src/classes/dto/class-name.dto.ts
+- tickets/STATUS.md (doc, skimmed)
+- tickets/T-013.md (doc, skimmed)
+- .code-reviews/brainx-review.md (previous review file, deleted in staging; not reviewed)
