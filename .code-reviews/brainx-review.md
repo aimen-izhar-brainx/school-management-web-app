@@ -1,11 +1,11 @@
 ---
-diff_hash: dff4ec300782c238d82cf5ad26335e115ea11f2d3d0af7c24d6c7c7226d35e32
-reviewed_at: 2026-10-13T07:31:31Z
+diff_hash: 782bc56a71677bdcef2a51c1aa011407638172bd661f5e5d9a5e8d882d9e9a7c
+reviewed_at: 2026-10-13T07:43:43Z
 ---
 
 ## Summary
 
-Adds the Class model + migration and a `classes` NestJS module (list for any authenticated user; create/rename/delete admin-only via JwtAuthGuard + RolesGuard), a trimming/validating DTO, and an integration spec against real Postgres. Auth, validation, error mapping (P2002/P2025) and select-limited responses are sound. Stack: NestJS (Prisma). Ticket/STATUS markdown changes are doc-only.
+T-014: `ClassesPage` now loads, creates, renames and deletes classes through the `/classes` API (via new `api.patch` / `api.delete` helpers in `http.ts`) instead of local mock data. It adds loading/error/empty states, in-flight guards for rename and delete, a delete confirmation, and hides write controls for non-admins. Section/subject counts are removed from the list until M2. Ticket and status docs are updated to match. Stack: React 19 + Vite + TypeScript + Tailwind (frontend only; no backend changes in this diff, so no cross-repo contract risk).
 
 ## Findings
 
@@ -13,31 +13,30 @@ Adds the Class model + migration and a `classes` NestJS module (list for any aut
 
 ### High (0)
 
-### Medium (1)
-- **backend/prisma/schema.prisma:59** — The `@unique` on `Class.name` (and the migration's `Class_name_key` index) is case-sensitive, but the business rule and the service pre-check are case-insensitive. Two concurrent requests for "Math" and "math" both pass `assertNameFree` and both insert successfully, so the DB constraint does not back the case-insensitive rule (the P2002 fallback only catches exact-case races). *(correctness)*
+### Medium (2)
+- **frontend/src/components/ClassesPage.tsx:334** — Rename and delete failures (including the "This class no longer exists." 404 message required by UC-02-E2 / UC-03-E1) are written to `classNameError`, which is only rendered inside the "New class" form in the sidebar. The user sees the error under the add-class input, far from the Rename/Delete controls they just used, and it reads as if the add form failed. *(correctness / UX)*
   - status: open
   - dev_reasoning: N/A
-  - ai_reasoning: Enforce at DB level with a unique index on `lower(name)` (raw SQL in the migration) or store a normalized `nameKey` column with the unique constraint. The race test only covers identical-case names, so it doesn't catch this.
+  - ai_reasoning: `commitRenameClass` (line 177) and `handleDeleteClass` (line 195) reuse the shared `classNameError` state. Use a separate error state rendered next to the class header/rename form, or otherwise scope the error to the action that produced it.
+- **frontend/src/components/ClassesPage.tsx:135** — `handleAddClass` has no in-flight guard or disabled/loading state on the submit button, unlike rename and delete. A double click or Enter-key repeat sends duplicate POSTs; the second can fail with a confusing "already exists" error right after the first succeeded. *(correctness / consistency)*
+  - status: open
+  - dev_reasoning: N/A
+  - ai_reasoning: Add an `isCreating` flag mirroring `isSavingRename` / `isDeleting`, bail out early when set, and disable the add button while the request is pending.
 
 ### Low (2)
-- **backend/src/classes/classes.service.ts:12** — `list()` is an unbounded `findMany` with no pagination. *(performance)*
-  - status: skipped
-  - dev_reasoning: Intentional. AC-05.2 requires the list endpoint to return all classes, and a single school has at most a few dozen. Pagination is not in the v1 scope.
-  - ai_reasoning: Class counts are small and AC-05.2 requires returning all, so impact is minimal; consider a sane cap or note the intentional choice.
-- **backend/src/classes/classes.controller.spec.ts:44** — `(prisma as any).class` is used repeatedly although `PrismaService` already exposes a typed `class` delegate (the service uses it without a cast). *(maintainability)*
+- **frontend/src/components/ClassesPage.tsx:119** — The load effect and `handleClassGone` have no stale/unmount guard, and when a resync after a 404 fails, `loadStatus` flips to `'error'` while the stale list (still containing the deleted class) remains rendered under the error message. *(correctness / robustness)*
   - status: open
   - dev_reasoning: N/A
-  - ai_reasoning: Drop the `as any` casts so tests get type checking on the model.
+  - ai_reasoning: Add an ignore flag or AbortController to the effect, and decide explicitly what the UI should show when a resync fails (for example, keep the previous list but avoid presenting it as current).
+- **frontend/src/components/ClassesPage.tsx:313** — The `{canManageClasses && (` wrapper around the add-class `<form>` was added without re-indenting the form body, so the JSX is misformatted and inconsistent with the rest of the file. *(style)*
+  - status: open
+  - dev_reasoning: N/A
+  - ai_reasoning: Run the project formatter or re-indent the wrapped block.
 
 ## Reviewed files
-- backend/prisma/migrations/20261013072948_add_class/migration.sql
-- backend/prisma/schema.prisma
-- backend/src/app.module.ts
-- backend/src/classes/classes.controller.spec.ts
-- backend/src/classes/classes.controller.ts
-- backend/src/classes/classes.module.ts
-- backend/src/classes/classes.service.ts
-- backend/src/classes/dto/class-name.dto.ts
-- tickets/STATUS.md (doc, skimmed)
-- tickets/T-013.md (doc, skimmed)
-- .code-reviews/brainx-review.md (previous review file, deleted in staging; not reviewed)
+- .code-reviews/brainx-review.md (deleted in staging; previous review artifact, skipped)
+- frontend/src/components/ClassesPage.test.tsx
+- frontend/src/components/ClassesPage.tsx
+- frontend/src/lib/http.ts
+- tickets/STATUS.md
+- tickets/T-014.md

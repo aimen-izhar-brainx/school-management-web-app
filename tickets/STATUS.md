@@ -2,7 +2,7 @@
 |---|---|---|---|---|
 | T-012 | RolesGuard + @Roles decorator (backend infrastructure) | DONE | 2 | try 2: pre-commit review asked for Role typing + guard branch tests |
 | T-013 | Class CRUD API (backend) | DONE | 2 | try 2: Class.name made citext for case-insensitive DB uniqueness |
-| T-014 | Wire ClassesPage class list to real API (frontend) | TODO | 0 | |
+| T-014 | Wire ClassesPage class list to real API (frontend) | DONE | 3 | user: hide section/subject counts until M2 (AC-05.3 added) |
 | T-015 | Section CRUD + class-teacher assignment (backend) | TODO | 0 | |
 | T-016 | Subject catalog + class-subject-teacher assignment (backend) | TODO | 0 | |
 | T-017 | Link students to sections (backend) | TODO | 0 | |

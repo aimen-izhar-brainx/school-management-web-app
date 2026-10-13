@@ -1,6 +1,7 @@
 import { BookOpen, Pencil, Plus, Trash2, UserRound, Users, X } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { AuthUser } from '../lib/auth'
+import { api, ApiError } from '../lib/http'
 import { DashboardShell } from './DashboardShell'
 
 interface ClassesPageProps {
@@ -63,75 +64,88 @@ function makeId(prefix: string): string {
   return `${prefix}-${idCounter}`
 }
 
-const initialClasses: SchoolClass[] = [
-  {
-    id: 'class-1',
-    name: 'Grade 5',
-    subjects: [
-      { name: 'Mathematics', teacherId: 't2' },
-      { name: 'English', teacherId: 't5' },
-      { name: 'Science', teacherId: null },
-    ],
-    sections: [
-      {
-        id: 'section-1',
-        name: 'A',
-        classTeacherId: 't1',
-        roster: [
-          { id: 's1', name: 'Ava Thompson', rollNumber: '501' },
-          { id: 's2', name: 'Liam Chen', rollNumber: '502' },
-          { id: 's3', name: 'Noah Patel', rollNumber: '503' },
-        ],
-      },
-      {
-        id: 'section-2',
-        name: 'B',
-        classTeacherId: null,
-        roster: [
-          { id: 's4', name: 'Emma Garcia', rollNumber: '504' },
-          { id: 's5', name: 'Oliver Wright', rollNumber: '505' },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'class-2',
-    name: 'Grade 6',
-    subjects: [
-      { name: 'Mathematics', teacherId: 't2' },
-      { name: 'Science', teacherId: 't4' },
-      { name: 'Computer Science', teacherId: null },
-    ],
-    sections: [
-      {
-        id: 'section-3',
-        name: 'A',
-        classTeacherId: 't3',
-        roster: [
-          { id: 's6', name: 'Isla Novak', rollNumber: '601' },
-          { id: 's7', name: 'Mateo Alvarez', rollNumber: '602' },
-        ],
-      },
-    ],
-  },
-]
+const GENERIC_ERROR = 'Something went wrong. Please try again.'
 
-/** Admin-only screen for managing classes, sections, subjects and class teachers. UI only — nothing is persisted yet. */
+/** Shape returned by the /classes API; sections and subjects are still mocked locally (T-018/T-019). */
+interface ApiClass {
+  id: string
+  name: string
+}
+
+type LoadStatus = 'loading' | 'ready' | 'error'
+
+/** Client errors (4xx) carry a user-facing message from the API; anything else is shown generically. */
+function errorMessage(error: unknown): string {
+  return error instanceof ApiError && error.status < 500 ? error.message : GENERIC_ERROR
+}
+
+function withMockedDetails(apiClass: ApiClass, existing?: SchoolClass): SchoolClass {
+  return { subjects: [], sections: [], ...existing, ...apiClass }
+}
+
+/** Admin-only screen for managing classes (persisted via the API), plus still-mocked sections, subjects and class teachers. */
 export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
-  const [classes, setClasses] = useState<SchoolClass[]>(initialClasses)
-  const [selectedClassId, setSelectedClassId] = useState<string | null>(initialClasses[0]?.id ?? null)
+  const [classes, setClasses] = useState<SchoolClass[]>([])
+  const [loadStatus, setLoadStatus] = useState<LoadStatus>('loading')
+  const [selectedClassId, setSelectedClassId] = useState<string | null>(null)
   const [rosterSectionId, setRosterSectionId] = useState<string | null>(null)
 
   const [newClassName, setNewClassName] = useState('')
   const [classNameError, setClassNameError] = useState<string | null>(null)
+  const [isCreating, setIsCreating] = useState(false)
+  const [classActionError, setClassActionError] = useState<string | null>(null)
 
   const [editingClassId, setEditingClassId] = useState<string | null>(null)
   const [editingClassName, setEditingClassName] = useState('')
+  const [isSavingRename, setIsSavingRename] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const [newSectionName, setNewSectionName] = useState('')
   const [sectionError, setSectionError] = useState<string | null>(null)
 
   const [newSubject, setNewSubject] = useState('')
+
+  const canManageClasses = user.role === 'admin'
+
+  const applyLoadedClasses = useCallback((apiClasses: ApiClass[]) => {
+    setClasses((prev) => apiClasses.map((apiClass) => withMockedDetails(apiClass, prev.find((c) => c.id === apiClass.id))))
+    setLoadStatus('ready')
+  }, [])
+
+  const isMounted = useRef(true)
+  useEffect(() => {
+    isMounted.current = true
+    return () => {
+      isMounted.current = false
+    }
+  }, [])
+
+  const loadClasses = useCallback(
+    () =>
+      api.get<ApiClass[]>('/classes').then(
+        (apiClasses) => {
+          if (isMounted.current) applyLoadedClasses(apiClasses)
+        },
+        () => {
+          if (!isMounted.current) return
+          // Do not present a stale list as current when the (re)load fails.
+          setClasses([])
+          setSelectedClassId(null)
+          setLoadStatus('error')
+        },
+      ),
+    [applyLoadedClasses],
+  )
+
+  useEffect(() => {
+    void loadClasses()
+  }, [loadClasses])
+
+  /** The class no longer exists on the server (e.g. removed in another session): resync the list. */
+  const handleClassGone = async () => {
+    setEditingClassId(null)
+    await loadClasses()
+  }
 
   const selectedClass = classes.find((schoolClass) => schoolClass.id === selectedClassId) ?? null
   const rosterSection = selectedClass?.sections.find((section) => section.id === rosterSectionId) ?? null
@@ -140,8 +154,9 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
     setClasses((prev) => prev.map((schoolClass) => (schoolClass.id === classId ? updater(schoolClass) : schoolClass)))
   }
 
-  const handleAddClass = (event: FormEvent<HTMLFormElement>) => {
+  const handleAddClass = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (isCreating) return
     setClassNameError(null)
 
     const name = newClassName.trim()
@@ -154,10 +169,17 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
       return
     }
 
-    const created: SchoolClass = { id: makeId('class'), name, subjects: [], sections: [] }
-    setClasses((prev) => [...prev, created])
-    setSelectedClassId(created.id)
-    setNewClassName('')
+    setIsCreating(true)
+    try {
+      const created = await api.post<ApiClass>('/classes', { name })
+      setClasses((prev) => [...prev, withMockedDetails(created)])
+      setSelectedClassId(created.id)
+      setNewClassName('')
+    } catch (error) {
+      setClassNameError(errorMessage(error))
+    } finally {
+      setIsCreating(false)
+    }
   }
 
   const startRenameClass = (schoolClass: SchoolClass) => {
@@ -165,19 +187,42 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
     setEditingClassName(schoolClass.name)
   }
 
-  const commitRenameClass = (event: FormEvent<HTMLFormElement>) => {
+  const commitRenameClass = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const name = editingClassName.trim()
-    if (editingClassId && name) {
-      updateClass(editingClassId, (schoolClass) => ({ ...schoolClass, name }))
+    if (!editingClassId || !name || isSavingRename) return
+
+    setClassActionError(null)
+    setIsSavingRename(true)
+    try {
+      const renamed = await api.patch<ApiClass>(`/classes/${editingClassId}`, { name })
+      updateClass(renamed.id, (schoolClass) => ({ ...schoolClass, name: renamed.name }))
+      setEditingClassId(null)
+      setEditingClassName('')
+    } catch (error) {
+      setClassActionError(errorMessage(error))
+      if (error instanceof ApiError && error.status === 404) await handleClassGone()
+    } finally {
+      setIsSavingRename(false)
     }
-    setEditingClassId(null)
-    setEditingClassName('')
   }
 
-  const handleDeleteClass = (id: string) => {
-    setClasses((prev) => prev.filter((schoolClass) => schoolClass.id !== id))
-    if (selectedClassId === id) setSelectedClassId(null)
+  const handleDeleteClass = async (id: string) => {
+    if (isDeleting) return
+    if (!window.confirm('Delete this class? This cannot be undone.')) return
+
+    setClassActionError(null)
+    setIsDeleting(true)
+    try {
+      await api.delete(`/classes/${id}`)
+      setClasses((prev) => prev.filter((schoolClass) => schoolClass.id !== id))
+      setSelectedClassId((prev) => (prev === id ? null : prev))
+    } catch (error) {
+      setClassActionError(errorMessage(error))
+      if (error instanceof ApiError && error.status === 404) await handleClassGone()
+    } finally {
+      setIsDeleting(false)
+    }
   }
 
   const handleAddSection = (event: FormEvent<HTMLFormElement>) => {
@@ -265,6 +310,11 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
           <aside className="shrink-0 lg:w-64">
             <h2 className="text-sm font-semibold text-slate-700">All classes</h2>
             <ul className="mt-3 space-y-1.5">
+              {loadStatus === 'error' && (
+                <li role="alert" className="text-xs text-red-600">
+                  Could not load classes. Please refresh and try again.
+                </li>
+              )}
               {classes.map((schoolClass) => (
                 <li key={schoolClass.id}>
                   <button
@@ -277,45 +327,52 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
                     }`}
                   >
                     <span className="text-sm font-semibold">{schoolClass.name}</span>
-                    <span className="text-xs text-slate-500">
-                      {schoolClass.sections.length} section{schoolClass.sections.length === 1 ? '' : 's'} &middot;{' '}
-                      {schoolClass.subjects.length} subject{schoolClass.subjects.length === 1 ? '' : 's'}
-                    </span>
                   </button>
                 </li>
               ))}
-              {classes.length === 0 && <li className="text-xs text-slate-400">No classes yet.</li>}
+              {loadStatus === 'loading' && <li className="text-xs text-slate-400">Loading classes...</li>}
+              {loadStatus === 'ready' && classes.length === 0 && (
+                <li className="text-xs text-slate-400">No classes yet.</li>
+              )}
             </ul>
 
-            <form onSubmit={handleAddClass} className="mt-4 space-y-2" noValidate>
-              <label htmlFor="new-class-name" className="block text-xs font-medium text-slate-700">
-                New class
-              </label>
-              <div className="flex gap-2">
-                <input
-                  id="new-class-name"
-                  value={newClassName}
-                  onChange={(event) => setNewClassName(event.target.value)}
-                  placeholder="e.g. Grade 7"
-                  className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                />
-                <button
-                  type="submit"
-                  className="flex shrink-0 items-center justify-center rounded-lg bg-violet-600 px-3 py-2 text-white transition-colors hover:bg-violet-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
-                  aria-label="Add class"
-                >
-                  <Plus className="size-4" />
-                </button>
-              </div>
-              {classNameError && (
-                <p role="alert" className="text-xs text-red-600">
-                  {classNameError}
-                </p>
-              )}
-            </form>
+            {canManageClasses && (
+              <form onSubmit={handleAddClass} className="mt-4 space-y-2" noValidate>
+                <label htmlFor="new-class-name" className="block text-xs font-medium text-slate-700">
+                  New class
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="new-class-name"
+                    value={newClassName}
+                    onChange={(event) => setNewClassName(event.target.value)}
+                    placeholder="e.g. Grade 7"
+                    className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isCreating}
+                    className="flex shrink-0 items-center justify-center rounded-lg bg-violet-600 px-3 py-2 text-white transition-colors hover:bg-violet-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600 disabled:opacity-60"
+                    aria-label="Add class"
+                  >
+                    <Plus className="size-4" />
+                  </button>
+                </div>
+                {classNameError && (
+                  <p role="alert" className="text-xs text-red-600">
+                    {classNameError}
+                  </p>
+                )}
+              </form>
+            )}
           </aside>
 
           <div className="min-w-0 flex-1">
+            {classActionError && (
+              <p role="alert" className="mb-4 text-sm text-red-600">
+                {classActionError}
+              </p>
+            )}
             {!selectedClass && (
               <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
                 Select a class from the list, or create a new one to get started.
@@ -335,9 +392,10 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
                       />
                       <button
                         type="submit"
-                        className="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-violet-700"
+                        disabled={isSavingRename}
+                        className="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-violet-700 disabled:opacity-60"
                       >
-                        Save
+                        {isSavingRename ? 'Saving...' : 'Save'}
                       </button>
                       <button
                         type="button"
@@ -351,7 +409,7 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
                     <h2 className="text-xl font-bold text-slate-900">{selectedClass.name}</h2>
                   )}
 
-                  {editingClassId !== selectedClass.id && (
+                  {canManageClasses && editingClassId !== selectedClass.id && (
                     <div className="flex items-center gap-1.5">
                       <button
                         type="button"
@@ -364,7 +422,8 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
                       <button
                         type="button"
                         onClick={() => handleDeleteClass(selectedClass.id)}
-                        className="flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50"
+                        disabled={isDeleting}
+                        className="flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-60"
                       >
                         <Trash2 className="size-3.5" />
                         Delete class
