@@ -3,12 +3,8 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { compareByName } from '../lib/compareByName'
 import { errorMessage, isNotFound } from '../lib/errorMessage'
 import { api } from '../lib/http'
-import type { TeacherOption } from '../lib/types'
-
-interface Subject {
-  id: string
-  name: string
-}
+import type { Subject, TeacherOption } from '../lib/types'
+import { SubjectCatalogManager } from './SubjectCatalogManager'
 
 interface ClassSubjectRow {
   id: string
@@ -195,6 +191,16 @@ export function ClassSubjectsPanel({
       },
     )
 
+  const handleRenamed = (updated: Subject) => {
+    setCatalog((prev) => prev.map((subject) => (subject.id === updated.id ? updated : subject)).sort(compareByName))
+    setRows((prev) =>
+      prev.map((row) => (row.subject.id === updated.id ? { ...row, subject: updated } : row)).sort(bySubjectName),
+    )
+  }
+
+  const handleDeleted = (subjectId: string) =>
+    setCatalog((prev) => prev.filter((subject) => subject.id !== subjectId))
+
   const available =
     rowsStatus !== 'ready'
       ? []
@@ -322,6 +328,13 @@ export function ClassSubjectsPanel({
               {newSubjectError}
             </p>
           )}
+
+          <SubjectCatalogManager
+            catalog={catalog}
+            onRenamed={handleRenamed}
+            onDeleted={handleDeleted}
+            onGone={() => Promise.all([loadRows(), loadCatalog()])}
+          />
         </>
       )}
     </section>

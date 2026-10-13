@@ -981,3 +981,196 @@ describe('ClassesPage subjects + students (T-019)', () => {
     expect(await screen.findByRole('button', { name: 'Science' })).toBeInTheDocument()
   })
 })
+
+// ---------------------------------------------------------------------------
+// T-027: subject catalog rename + delete
+//
+// UI contract the implementation must follow:
+//  - A "Manage subjects" area (admin only) lists every catalog subject, each
+//    with buttons named "Rename <name>" and "Delete <name>".
+//  - Rename opens an inline input labelled "Subject name" (prefilled with the
+//    current name) with "Save" and "Cancel" buttons. Save with an empty/blank
+//    value shows "Please enter a subject name." without sending a request.
+//    Otherwise it calls api.patch(`/subjects/${id}`, { name }).
+//  - Delete calls window.confirm, then api.delete(`/subjects/${id}`).
+//  - ApiError messages (400) are shown as text; a 404 shows
+//    "This subject no longer exists." and refetches GET /subjects.
+//  - After a successful rename the catalog and the class's subject list
+//    (e.g. "Remove <new name>", "Teacher for <new name>") show the new name.
+// ---------------------------------------------------------------------------
+
+describe('ClassesPage subject catalog rename/delete (T-027)', () => {
+  const SUBJECT_GONE = 'This subject no longer exists.'
+  const subjectsFetchCount = () => mockApi.get.mock.calls.filter((c) => c[0] === '/subjects').length
+
+  async function openCatalog(routes: GetRoutes = {}, overrides = {}) {
+    const full = await openGrade5T19(routes, overrides)
+    await screen.findByRole('button', { name: 'Rename Science' })
+    return full
+  }
+
+  async function startRename(name: string, value: string) {
+    fireEvent.click(screen.getByRole('button', { name: `Rename ${name}` }))
+    fireEvent.change(await screen.findByLabelText('Subject name'), { target: { value } })
+  }
+
+  const clickSave = () => fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+  it('AC-22.1 a rename PATCHes /subjects/:id and the new name shows in the catalog and the class subject list', async () => {
+    const routes = await openCatalog({ classSubjects: { c1: [mathsRow] } })
+    expect(await screen.findByRole('button', { name: 'Remove Maths' })).toBeInTheDocument()
+    mockApi.patch.mockImplementation(async (_url: string, body: { name: string }) => {
+      const renamed = { id: 'sub1', name: body.name }
+      routes.subjects = routes.subjects!.map((s) => (s.id === 'sub1' ? renamed : s))
+      routes.classSubjects!.c1 = [{ ...mathsRow, subject: renamed }]
+      return renamed
+    })
+
+    await startRename('Maths', 'Mathematics')
+    clickSave()
+
+    expect(await screen.findByRole('button', { name: 'Rename Mathematics' })).toBeInTheDocument()
+    expect(mockApi.patch).toHaveBeenCalledWith('/subjects/sub1', { name: 'Mathematics' })
+    expect(screen.getByRole('button', { name: 'Delete Mathematics' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Remove Mathematics' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Teacher for Mathematics' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Rename Maths' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Remove Maths' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Subject name')).not.toBeInTheDocument()
+  })
+
+  it('AC-22.2 the backend "Please enter a subject name." message is shown and the original name is kept', async () => {
+    await openCatalog({ classSubjects: { c1: [mathsRow] } })
+    mockApi.patch.mockRejectedValue(new ApiError(400, { message: 'Please enter a subject name.' }))
+
+    await startRename('Maths', 'x')
+    clickSave()
+
+    expect(await screen.findByText('Please enter a subject name.')).toBeInTheDocument()
+    expect(mockApi.patch).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Remove Maths' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+    expect(screen.getByRole('button', { name: 'Rename Maths' })).toBeInTheDocument()
+  })
+
+  it('AC-22.2 clearing the name and saving shows the message without sending a request and keeps the name', async () => {
+    await openCatalog({ classSubjects: { c1: [mathsRow] } })
+
+    await startRename('Maths', '')
+    clickSave()
+
+    expect(await screen.findByText('Please enter a subject name.')).toBeInTheDocument()
+    expect(mockApi.patch).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Remove Maths' })).toBeInTheDocument()
+  })
+
+  it('AC-22.3 a duplicate name shows "This subject already exists." and the name is not changed', async () => {
+    await openCatalog({ classSubjects: { c1: [mathsRow] } })
+    mockApi.patch.mockRejectedValue(new ApiError(400, { message: 'This subject already exists.' }))
+
+    await startRename('Maths', 'science')
+    clickSave()
+
+    expect(await screen.findByText('This subject already exists.')).toBeInTheDocument()
+    expect(mockApi.patch).toHaveBeenCalledWith('/subjects/sub1', { name: 'science' })
+    expect(screen.getByRole('button', { name: 'Remove Maths' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Rename Science' })).toBeInTheDocument()
+  })
+
+  it('AC-22.4 confirming delete of an unused subject sends DELETE and removes it from the catalog and quick-add list', async () => {
+    const routes = await openCatalog({ classSubjects: { c1: [mathsRow] } })
+    expect(screen.getByRole('button', { name: 'Science' })).toBeInTheDocument()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockApi.delete.mockImplementation(async () => {
+      routes.subjects = routes.subjects!.filter((s) => s.id !== 'sub2')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Science' }))
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Delete Science' })).not.toBeInTheDocument())
+    expect(mockApi.delete).toHaveBeenCalledWith('/subjects/sub2')
+    expect(window.confirm).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: 'Rename Science' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Science' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Rename Maths' })).toBeInTheDocument()
+  })
+
+  it('AC-22.5 deleting an in-use subject shows the backend message and the subject remains', async () => {
+    await openCatalog({ classSubjects: { c1: [mathsRow] } })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockApi.delete.mockRejectedValue(new ApiError(400, { message: "This subject is in use and can't be deleted." }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Maths' }))
+
+    expect(await screen.findByText("This subject is in use and can't be deleted.")).toBeInTheDocument()
+    expect(mockApi.delete).toHaveBeenCalledWith('/subjects/sub1')
+    expect(screen.getByRole('button', { name: 'Delete Maths' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Remove Maths' })).toBeInTheDocument()
+  })
+
+  it('AC-22.6 cancelling the delete confirmation sends no DELETE and keeps the subject', async () => {
+    await openCatalog()
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Science' }))
+
+    expect(window.confirm).toHaveBeenCalledTimes(1)
+    expect(mockApi.delete).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Delete Science' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Science' })).toBeInTheDocument()
+  })
+
+  it('UC-22-E2 a 404 on rename shows "This subject no longer exists." and refetches GET /subjects', async () => {
+    const routes = await openCatalog()
+    mockApi.patch.mockImplementation(async () => {
+      routes.subjects = routes.subjects!.filter((s) => s.id !== 'sub2')
+      throw new ApiError(404, { message: SUBJECT_GONE })
+    })
+    const before = subjectsFetchCount()
+
+    await startRename('Science', 'Physics')
+    clickSave()
+
+    expect(await screen.findByText(SUBJECT_GONE)).toBeInTheDocument()
+    await waitFor(() => expect(subjectsFetchCount()).toBeGreaterThan(before))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Rename Science' })).not.toBeInTheDocument())
+  })
+
+  it('UC-22-E2 a 404 on delete shows "This subject no longer exists." and refetches GET /subjects', async () => {
+    const routes = await openCatalog()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockApi.delete.mockImplementation(async () => {
+      routes.subjects = routes.subjects!.filter((s) => s.id !== 'sub2')
+      throw new ApiError(404, { message: SUBJECT_GONE })
+    })
+    const before = subjectsFetchCount()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Science' }))
+
+    expect(await screen.findByText(SUBJECT_GONE)).toBeInTheDocument()
+    await waitFor(() => expect(subjectsFetchCount()).toBeGreaterThan(before))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Delete Science' })).not.toBeInTheDocument())
+  })
+
+  it('AC-12.2 admin (positive control) sees enabled Rename and Delete buttons for every catalog subject', async () => {
+    await openCatalog()
+
+    for (const name of ['Maths', 'Science']) {
+      expect(screen.getByRole('button', { name: `Rename ${name}` })).toBeEnabled()
+      expect(screen.getByRole('button', { name: `Delete ${name}` })).toBeEnabled()
+    }
+  })
+
+  it.each([
+    ['teacher', teacher],
+    ['student', student],
+  ])('AC-12.2 %s sees no enabled catalog Rename or Delete controls', async (_label, viewer) => {
+    await openGrade5T19({ classSubjects: { c1: [mathsRow] } }, { user: viewer })
+    expect(await screen.findByText('Maths')).toBeInTheDocument()
+
+    for (const name of ['Maths', 'Science']) {
+      expect(isHiddenOrDisabled(screen.queryByRole('button', { name: `Rename ${name}` }))).toBe(true)
+      expect(isHiddenOrDisabled(screen.queryByRole('button', { name: `Delete ${name}` }))).toBe(true)
+    }
+  })
+})

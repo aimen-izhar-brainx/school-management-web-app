@@ -9,7 +9,7 @@
 | T-018 | Wire Sections UI (frontend) | DONE | 1 | added GET /classes/:classId/sections (backend gap) |
 | T-019 | Wire Subjects + student assignment UI (frontend) | DONE | 2 | reviewer: dialog focus + quick-add before load |
 | T-026 | Subject rename + delete (backend) | DONE | 1 | |
-| T-027 | Subject rename + delete UI (frontend) | TODO | 0 | |
+| T-027 | Subject rename + delete UI (frontend) | DONE | 1 | |
 | T-028 | Delete class with sections, subjects or students (backend) | TODO | 0 | |
 | T-029 | Delete class confirmation with impact counts (frontend) | TODO | 0 | |
 | T-020 | Fixed Period schedule (backend) | TODO | 0 | |

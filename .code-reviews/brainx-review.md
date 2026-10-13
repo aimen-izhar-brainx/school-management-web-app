@@ -1,11 +1,11 @@
 ---
-diff_hash: 904fc355450a863497f8ecf89b56cb829ef57c5b783949018505e06ecfa13a97
-reviewed_at: 2026-10-13T09:51:50Z
+diff_hash: 2e9f24b23e57b38be6502118c842a6d3444e038220cfd5e85e5755b1d6d789b9
+reviewed_at: 2026-10-13T10:01:04Z
 ---
 
 ## Summary
 
-Test-infrastructure chore: adds a shared `createTestApp` helper (`backend/test/helpers/test-app.ts`) and migrates all seven DB/HTTP-backed backend specs (classes, class-subjects, sections, subjects T-016/T-026, student-section, users controller, roles guard) to it, removing ~300 lines of duplicated Nest bootstrap. The helper mirrors main.ts (`/api` prefix, same ValidationPipe options) and listens once on an ephemeral port to avoid supertest's per-request listen/close race. This resolves the previously skipped Low finding about duplicated bootstrap in subjects.spec.ts. No production code changed; backend only, no frontend contract impact. The deleted previous review record is not reviewed.
+T-027 frontend: adds an admin-only `SubjectCatalogManager` (inline rename + confirm-delete with per-action re-entry guards, 400 message display, 404 resync) mounted inside `ClassSubjectsPanel` under the `canManage` gate, moves `Subject` into `lib/types.ts`, wires rename/delete propagation into the catalog and class subject rows, adds tests for AC-22.x / UC-22-E2 / AC-12.2, and marks T-027 DONE. Stack: React (frontend only; no backend changes, so no cross-repo contract change). Server-side authorization is covered by T-026 and not part of this diff.
 
 ## Findings
 
@@ -15,23 +15,25 @@ Test-infrastructure chore: adds a shared `createTestApp` helper (`backend/test/h
 
 ### Medium (0)
 
-### Low (2)
-- **backend/test/helpers/test-app.ts:102** — When `prisma: false`, `prisma` was set to `undefined as unknown as PrismaService`, so the type claimed a PrismaService that was not there. *(maintainability)*
+### Low (3)
+- **frontend/src/components/SubjectCatalogManager.tsx:71** — A single shared `draft`/`editingId` is used, but the Rename buttons of other rows stay enabled while one row is being edited. Clicking Rename on another subject silently discards the in-progress edit (and its typed text) with no warning. *(correctness)*
   - status: fixed
   - dev_reasoning: N/A
-  - ai_reasoning: Fixed. `createTestApp` now has overloads returning `TestApp` (no `prisma`) for `prisma: false` and `DbTestApp extends TestApp` otherwise, and the cast is gone; `roles.guard.spec.ts` uses `TestApp`, so touching `prisma` there is a compile error.
-- **backend/src/subjects/subjects.spec.ts:25** — Each migrated spec keeps thin pass-through aliases (`tokenFor = r => t.tokenFor(r)`, `adminAuth`, `http`) and copies `jwt`/`prisma` out of `t` after setup. This partly re-creates the local boilerplate the helper was meant to remove and is repeated across the seven specs. Using `t.http()`, `t.adminAuth()` and `t.prisma` directly, or destructuring once, would finish the consolidation. *(maintainability)*
-  - status: ignored
-  - dev_reasoning: Already addressed. No pass-through wrapper functions remain (grep for `=> ctx.`/`=> t.` finds none). Each block destructures once from `ctx` in beforeAll (`({ http, tokenFor, adminAuth, jwt, prisma } = ctx)`), which is the "destructuring once" option this finding proposes. Inlining `ctx.` would rewrite 144 test-body lines for no behaviour change.
-  - ai_reasoning: Behaviour is correct. The aliases keep the migration diff small, but they leave duplicated indirection across files.
+  - ai_reasoning: Fixed: while one row is being edited, the Rename and Delete buttons on every other row are disabled (`otherEditing`, lines 136/174/183), so an in-progress draft can no longer be discarded by accident.
+- **frontend/src/components/SubjectCatalogManager.tsx:146** — No focus management: after Save/Cancel/successful rename or delete, the focused control unmounts (form swapped for the row, or row removed) and focus falls back to `<body>`, which is disorienting for keyboard and screen-reader users. *(accessibility)*
+  - status: fixed
+  - dev_reasoning: N/A
+  - ai_reasoning: Fixed: added `pendingFocus` handling. Focus returns to the row's Rename button after save/cancel and to the 'Manage subjects' heading (`tabIndex={-1}`) after delete.
+- **tickets/T-027.md:21** — Technical notes still say the work lives in `ClassesPage.tsx`, but the implementation is in the new `SubjectCatalogManager.tsx` mounted from `ClassSubjectsPanel.tsx`; the ticket doc now misdescribes where the code is. *(consistency)*
+  - status: fixed
+  - dev_reasoning: N/A
+  - ai_reasoning: Fixed: the ticket's technical notes now name `SubjectCatalogManager.tsx`, mounted from `ClassSubjectsPanel.tsx`, with tests in `ClassesPage.test.tsx`.
 
 ## Reviewed files
-- .code-reviews/brainx-review.md (deleted; previous review record, not reviewed)
-- backend/test/helpers/test-app.ts
-- backend/src/classes/class-subjects.spec.ts
-- backend/src/classes/classes.controller.spec.ts
-- backend/src/classes/sections.spec.ts
-- backend/src/common/guards/roles.guard.spec.ts
-- backend/src/subjects/subjects.spec.ts
-- backend/src/users/student-section.spec.ts
-- backend/src/users/users.controller.spec.ts
+- frontend/src/components/ClassSubjectsPanel.tsx
+- frontend/src/components/ClassesPage.test.tsx
+- frontend/src/components/SubjectCatalogManager.tsx
+- frontend/src/lib/types.ts
+- tickets/STATUS.md
+- tickets/T-027.md
+- .code-reviews/brainx-review.md (previous review file, deleted in the staged diff; skipped)
