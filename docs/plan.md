@@ -184,6 +184,7 @@ model TimetableEntry {
 | One teacher per subject per class (not multiple) | Confirmed with user during brainstorm |
 | Fixed, school-wide periods (not per-class configurable) | Confirmed with user during brainstorm; simplifies `Period` to one seeded table |
 | School day is 8:00 AM–1:00 PM, Monday–Friday | Confirmed with user during brainstorm |
+| Period seed: 6 × 45-min periods + one 30-min Recess (10:15–10:45) | Confirmed with user during /use-cases; resolves the brainstorm's open question |
 | Conflict detection is automatic, not just advisory | Confirmed with user during brainstorm; implemented via DB unique constraint |
 | Add nullable `User.sectionId` for students | Necessary gap found during planning — without it, students have no way to be linked to a timetable |
 | Single school, no multi-tenant data model | Confirmed with user during brainstorm |

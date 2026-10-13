@@ -14,15 +14,21 @@
 | UC-10 | Admin assigns a subject + teacher to a class | M2 | 4 | 2 |
 | UC-11 | Admin assigns a student to a section | M2 | 3 | 2 |
 | UC-12 | Role enforcement blocks non-admin writes (M2) | M2 | 2 | 1 |
+| UC-22 | Admin renames or deletes a subject | M2 | 6 | 3 |
+| UC-23 | Admin deletes a class that has sections, subjects or students | M2 | 5 | 2 |
 | UC-13 | Admin assigns a subject to a day/period slot | M3 | 4 | 2 |
 | UC-14 | System prevents a teacher from being double-booked | M3 | 3 | 2 |
 | UC-15 | Admin clears a timetable slot | M3 | 2 | 1 |
 | UC-16 | Admin views the full weekly timetable grid | M3 | 3 | 1 |
 | UC-17 | Role enforcement blocks non-admin writes (M3) | M3 | 2 | 1 |
+| UC-24 | Backend rejects invalid timetable entries | M3 | 5 | 2 |
 | UC-18 | Teacher views their own weekly timetable | M4 | 3 | 1 |
 | UC-19 | Student views their own section's weekly timetable | M4 | 3 | 1 |
 | UC-20 | Student not yet assigned to any section | M4 | 1 | 1 |
 | UC-21 | Read access is scoped to the caller, writes stay blocked (M4) | M4 | 3 | 1 |
+| UC-25 | Parent role has no access to Academic Management | M4 | 3 | 1 |
+
+UC-22 to UC-25 were added after tickets T-012 to T-025 were created. They are grouped by milestone above, and the existing IDs were not renumbered.
 
 ---
 
@@ -86,7 +92,7 @@
   - UC-03-E1: Class already deleted by another session → shows "This class no longer exists." instead of a crash, and refreshes the list.
   - UC-03-E2: Deleting the last remaining class shows the "No classes yet." empty state cleanly.
   - UC-03-E3: Backend unreachable → generic error shown, class remains in the list.
-- Not included: cascading effects on sections/subjects (none exist yet at M1).
+- Not included: cascading effects on sections/subjects (none exist yet at M1; see UC-23 for M2 onward).
 
 ### UC-04: Role enforcement blocks non-admin writes
 - Actor: Teacher, Student
@@ -242,9 +248,62 @@
   - UC-12-E1: No token / expired token → 401 Unauthorized, same as M1.
 - Not included: read access scoping (teachers/students don't browse the full Classes page in this app; their own view is M4's "My Timetable").
 
+### UC-22: Admin renames or deletes a subject
+- Actor: Admin
+- Milestone: M2
+- Preconditions: Admin is logged in; at least one subject exists in the catalog.
+- Main flow:
+  1. Admin clicks "Rename" on a subject in the catalog, edits the name and saves; or
+  2. Admin clicks "Delete" on a subject and confirms.
+  3. System applies the change.
+- Acceptance criteria (Definition of Done):
+  - [ ] AC-22.1 Given a valid, unique new name, when saved, then the new name shows immediately in the catalog, in every class's subject list and in every timetable cell that uses it, and it persists after reload.
+  - [ ] AC-22.2 Given the name is cleared to empty, when saved, then shows "Please enter a subject name." and keeps the original name.
+  - [ ] AC-22.3 Given the new name already belongs to another subject (case-insensitive), when saved, then shows "This subject already exists." and the rename is not applied.
+  - [ ] AC-22.4 Given a subject not assigned to any class, when Admin confirms delete, then it disappears from the catalog and does not reappear after reload.
+  - [ ] AC-22.5 Given a subject assigned to one or more classes, when Admin confirms delete, then shows "This subject is in use and can't be deleted." and nothing is removed (same rule as UC-09-E1).
+  - [ ] AC-22.6 Given Admin cancels the delete confirmation, then the subject is not deleted.
+- Edge cases:
+  - UC-22-E1: Changing only the letter case of the subject's own name (e.g. "maths" → "Maths") succeeds and is not treated as a duplicate.
+  - UC-22-E2: Subject was already deleted by another session → shows "This subject no longer exists." and refreshes the catalog.
+  - UC-22-E3: One admin deletes a subject while another admin assigns it to a class at nearly the same time → the database keeps them consistent: either the delete fails with the in-use error, or the assignment fails because the subject no longer exists. A class never ends up with a deleted subject.
+- Not included: merging two subjects; subject categories/departments.
+
+### UC-23: Admin deletes a class that has sections, subjects or students
+- Actor: Admin
+- Milestone: M2
+- Preconditions: Admin is logged in; the class has at least one section or subject assignment.
+- Main flow:
+  1. Admin clicks "Delete class".
+  2. System shows a confirmation that lists what will be removed.
+  3. Admin confirms.
+  4. System deletes the class and everything that belongs to it, and unassigns its students.
+- Acceptance criteria (Definition of Done):
+  - [ ] AC-23.1 Given a class with sections, subject assignments or assigned students, when Admin clicks "Delete class", then the confirmation shows the counts, e.g. "Deleting Grade 5 will also delete 2 sections and 4 subject assignments. 30 students will be unassigned from their section."
+  - [ ] AC-23.2 Given Admin confirms, when the request completes, then the class, its sections, its subject assignments and its sections' timetable entries are all gone, both immediately and after reload.
+  - [ ] AC-23.3 Given students were assigned to those sections, when the class is deleted, then the student accounts still exist with no section; on "My Timetable" they see the UC-20 message.
+  - [ ] AC-23.4 Given teachers were scheduled in those sections, when the class is deleted, then those day/period slots are free and the teachers can be booked into other sections at those times without a conflict.
+  - [ ] AC-23.5 Given Admin cancels the confirmation, then nothing is deleted or unassigned.
+- Edge cases:
+  - UC-23-E1: A class with no sections, subjects or students shows the plain UC-03 confirmation, with no counts.
+  - UC-23-E2: A student is assigned to one of the class's sections after the dialog opens but before Admin confirms → that student is also unassigned, not deleted. The counts in the dialog may be out of date, but the result is still correct.
+- Not included: restoring a deleted class; moving sections to another class before deleting.
+
 ---
 
 ## M3 — Timetable builder
+
+**Fixed school-wide schedule (seeded, Monday–Friday):**
+
+| Order | Label | Time | Break |
+|---|---|---|---|
+| 1 | Period 1 | 8:00–8:45 | No |
+| 2 | Period 2 | 8:45–9:30 | No |
+| 3 | Period 3 | 9:30–10:15 | No |
+| 4 | Recess | 10:15–10:45 | Yes |
+| 5 | Period 4 | 10:45–11:30 | No |
+| 6 | Period 5 | 11:30–12:15 | No |
+| 7 | Period 6 | 12:15–1:00 | No |
 
 ### UC-13: Admin assigns a subject to a day/period slot in a section's timetable
 - Actor: Admin
@@ -259,7 +318,7 @@
   - [ ] AC-13.1 Given a subject with a teacher already assigned (UC-10), when picked for a slot, then the slot shows subject + teacher immediately and after reload.
   - [ ] AC-13.2 Given the subject dropdown for a slot, when opened, then only subjects already assigned to this class (UC-10) are listed — not the full subject catalog.
   - [ ] AC-13.3 Given a subject on this class has no teacher assigned yet, when Admin tries to place it in a slot, then shows "Assign a teacher to this subject first." and the slot is not saved.
-  - [ ] AC-13.4 Given a break period (e.g. "Recess", "Lunch"), when viewing the grid, then that row shows the break label and has no subject/teacher selector.
+  - [ ] AC-13.4 Given the break period ("Recess"), when viewing the grid, then that row shows the break label and has no subject/teacher selector.
 - Edge cases:
   - UC-13-E1: Admin changes a subject's assigned teacher later (UC-10) — existing timetable entries for that subject keep their original teacher until the admin explicitly updates each slot (no silent retroactive change).
   - UC-13-E2: The same subject can be placed in more than one slot per day/week — no limit enforced in v1.
@@ -306,7 +365,7 @@
 - Acceptance criteria (Definition of Done):
   - [ ] AC-16.1 Given a section with no entries yet, when opened, then all non-break cells show as empty ("+" / "Add" affordance), not an error.
   - [ ] AC-16.2 Given a section with existing entries, when opened, then each cell shows subject name + teacher name.
-  - [ ] AC-16.3 Given the grid, when rendered, then period start/end times and break labels match the seeded fixed schedule (8:00 AM–1:00 PM).
+  - [ ] AC-16.3 Given the grid, when rendered, then its rows match the fixed schedule table above exactly: 6 teaching periods of 45 minutes and one "Recess" row from 10:15 to 10:45, starting at 8:00 and ending at 1:00.
 - Edge cases:
   - UC-16-E1: Switching between sections reloads the grid for the newly selected section without mixing up data from the previous one.
 - Not included: printing/exporting the timetable (e.g. PDF).
@@ -324,6 +383,25 @@
 - Edge cases:
   - UC-17-E1: No token / expired token → 401 Unauthorized.
 - Not included: read access to other sections' full timetables for teachers/students (that's M4's narrower "my timetable" view).
+
+### UC-24: Backend rejects invalid timetable entries
+- Actor: Admin (calling the API directly, without the UI)
+- Milestone: M3
+- Preconditions: Caller has a valid admin token; the request is sent straight to the timetable-entry create/update endpoint.
+- Main flow:
+  1. Caller sends a timetable-entry write that the UI would not normally allow.
+  2. System validates it before saving.
+  3. System rejects it with a clear status and message.
+- Acceptance criteria (Definition of Done):
+  - [ ] AC-24.1 Given the period is the break period (Recess), when sent, then responds 400 "Cannot schedule a subject during a break." and no entry is created.
+  - [ ] AC-24.2 Given a subject that is not assigned to the section's class, when sent, then responds 400 "This subject is not assigned to this class." and no entry is created.
+  - [ ] AC-24.3 Given a subject that is assigned to the class but has no teacher, when sent, then responds 400 "Assign a teacher to this subject first." (same message as AC-13.3) and no entry is created.
+  - [ ] AC-24.4 Given a section, period or subject ID that doesn't exist, when sent, then responds 404 and no entry is created.
+  - [ ] AC-24.5 Given a day other than mon–fri (e.g. "sat"), when sent, then responds 400 and no entry is created.
+- Edge cases:
+  - UC-24-E1: A required field is missing → responds 400 with a message that names the missing field.
+  - UC-24-E2: The request includes a teacherId that is different from the class-subject's assigned teacher → the server ignores it and always uses the teacher from the class-subject assignment (UC-10), so the client can't choose the teacher.
+- Not included: validating that the same subject doesn't appear too many times a week (no limit in v1, per UC-13-E2).
 
 ---
 
@@ -389,3 +467,18 @@
 - Edge cases:
   - UC-21-E1: No token / expired token → 401 Unauthorized.
 - Not included: an admin's own "my timetable" view (admin is not a teaching role in this model — not applicable).
+
+### UC-25: Parent role has no access to Academic Management
+- Actor: Parent
+- Milestone: M4
+- Preconditions: Parent is logged in.
+- Main flow:
+  1. Parent tries to use any Academic Management page or endpoint.
+  2. System denies the write or read and shows a clear message.
+- Acceptance criteria (Definition of Done):
+  - [ ] AC-25.1 Given a logged-in Parent, when calling any write endpoint from M1–M3 (classes, sections, subjects, class-subjects, student assignment, timetable entries), then responds 403 Forbidden and no data changes.
+  - [ ] AC-25.2 Given a logged-in Parent, when calling `GET /timetable/me`, then responds 403 Forbidden.
+  - [ ] AC-25.3 Given a logged-in Parent, when opening the "My Timetable" page, then it shows "Not available for your role." with no grid and no error, and the Classes and Timetable builder pages have no admin controls.
+- Edge cases:
+  - UC-25-E1: No token / expired token → 401 Unauthorized, same as other roles.
+- Not included: a parent viewing their child's timetable (there is no parent–child link in v1).
