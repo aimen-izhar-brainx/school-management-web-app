@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import '@testing-library/jest-dom'
 import { ClassesPage } from './ClassesPage'
@@ -104,6 +104,22 @@ interface GetRoutes {
   classes?: { id: string; name: string }[]
   sections?: Record<string, SectionRow[]>
   teachers?: { id: string; name: string }[]
+  // T-019
+  subjects?: { id: string; name: string }[]
+  classSubjects?: Record<string, ClassSubjectRow[]>
+  students?: StudentRow[]
+}
+interface ClassSubjectRow {
+  id: string
+  subject: { id: string; name: string }
+  teacher: { id: string; name: string } | null
+}
+interface StudentRow {
+  id: string
+  name: string
+  email: string
+  role: 'student'
+  sectionId: string | null
 }
 
 // T-018: the page now calls api.get for several URLs, so GET is mocked per URL.
@@ -113,6 +129,10 @@ function mockGet(routes: GetRoutes) {
     if (url === '/classes') return Promise.resolve(routes.classes ?? [])
     const sectionsMatch = url.match(/^\/classes\/([^/]+)\/sections$/)
     if (sectionsMatch) return Promise.resolve(routes.sections?.[sectionsMatch[1]] ?? [])
+    if (url === '/subjects') return Promise.resolve(routes.subjects ?? [])
+    const classSubjectsMatch = url.match(/^\/classes\/([^/]+)\/subjects$/)
+    if (classSubjectsMatch) return Promise.resolve(routes.classSubjects?.[classSubjectsMatch[1]] ?? [])
+    if (url.startsWith('/users') && url.includes('role=student')) return Promise.resolve(routes.students ?? [])
     if (url.startsWith('/users')) return Promise.resolve(routes.teachers ?? [])
     return Promise.reject(new Error(`unexpected GET ${url}`))
   })
@@ -557,5 +577,407 @@ describe('ClassesPage sections (T-018)', () => {
     expect(isHiddenOrDisabled(screen.queryByRole('button', { name: /add section/i }))).toBe(true)
     expect(isHiddenOrDisabled(screen.queryByRole('button', { name: /remove/i }))).toBe(true)
     expect(isHiddenOrDisabled(screen.queryByRole('combobox'))).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// T-019: subjects + student assignment wired to the real API
+//
+// UI contract assumed by these tests:
+// - Subjects area: textbox labelled "New subject" + button "Add subject" (POST /subjects).
+// - Quick-add list: one button per catalog subject NOT yet on the class, accessible
+//   name exactly the subject name (POST /classes/:id/subjects {subjectId}).
+// - Class subject rows: select labelled "Teacher for <subject>" (options: teachers
+//   + "Unassigned") and button labelled "Remove <subject>".
+// - Per section row: button "View roster" opening role="dialog" containing a
+//   combobox labelled "Student", an "Assign" button, a list labelled "Roster"
+//   whose items show the student name and an "Unassign" button, a "Close" button,
+//   and the text "No students yet." when no student accounts exist.
+// ---------------------------------------------------------------------------
+
+const maths = { id: 'sub1', name: 'Maths' }
+const science = { id: 'sub2', name: 'Science' }
+const robotics = { id: 'sub3', name: 'Robotics' }
+const sectionB: SectionRow = { id: 's2', name: 'B', classTeacher: null }
+const mathsRow: ClassSubjectRow = { id: 'cs1', subject: maths, teacher: null }
+const sam: StudentRow = { id: 'u1', name: 'Sam Student', email: 'sam@example.com', role: 'student', sectionId: null }
+const priya: StudentRow = { id: 'u2', name: 'Priya Patel', email: 'priya@example.com', role: 'student', sectionId: null }
+
+async function openGrade5T19(routes: GetRoutes, overrides = {}) {
+  const full: GetRoutes = {
+    classes: [grade5],
+    sections: { c1: [sectionA, sectionB] },
+    teachers: [teacherGrace, teacherDaniel],
+    subjects: [maths, science],
+    classSubjects: { c1: [] },
+    students: [],
+    ...routes,
+  }
+  mockGet(full)
+  renderPage(overrides)
+  await selectClass('Grade 5')
+  await screen.findByText(sectionLabel('A'))
+  return full
+}
+
+async function openRoster(sectionName: string) {
+  const row = screen.getByText(sectionLabel(sectionName)).parentElement!
+  fireEvent.click(within(row).getByRole('button', { name: /view roster/i }))
+  return screen.findByRole('dialog')
+}
+
+function rosterNames(dialog: HTMLElement) {
+  const list = within(dialog).queryByRole('list', { name: /roster/i })
+  return list ? within(list).queryAllByRole('listitem').map((li) => li.textContent ?? '') : []
+}
+
+// Server-side behavior of PATCH /users/:id/section, applied to the mutable routes.
+function mockSectionPatch(routes: GetRoutes) {
+  mockApi.patch.mockImplementation(async (url: string, body: { sectionId: string | null }) => {
+    const id = url.match(/^\/users\/([^/]+)\/section$/)![1]
+    const target = routes.students!.find((st) => st.id === id)!
+    target.sectionId = body.sectionId
+    return { ...target }
+  })
+}
+
+describe('ClassesPage subjects + students (T-019)', () => {
+  it('loads the catalog from GET /subjects and the class subjects from GET /classes/:id/subjects', async () => {
+    await openGrade5T19({ classSubjects: { c1: [mathsRow] } })
+    expect(await screen.findByRole('button', { name: 'Remove Maths' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Science' })).toBeInTheDocument()
+    expect(mockApi.get).toHaveBeenCalledWith('/subjects')
+    expect(mockApi.get).toHaveBeenCalledWith('/classes/c1/subjects')
+  })
+
+  it('AC-09.1 a new catalog subject is POSTed, shown in the catalog and selectable for the class', async () => {
+    const routes = await openGrade5T19({})
+    await screen.findByRole('button', { name: 'Science' })
+    mockApi.post.mockImplementation(async (url: string) => {
+      if (url === '/subjects') {
+        routes.subjects = [...routes.subjects!, robotics]
+        return robotics
+      }
+      const row = { id: 'cs9', subject: robotics, teacher: null }
+      routes.classSubjects!.c1 = [...routes.classSubjects!.c1, row]
+      return row
+    })
+
+    fireEvent.change(screen.getByLabelText('New subject'), { target: { value: 'Robotics' } })
+    fireEvent.click(screen.getByRole('button', { name: /^add subject$/i }))
+
+    const quickAdd = await screen.findByRole('button', { name: 'Robotics' })
+    expect(mockApi.post).toHaveBeenCalledWith('/subjects', { name: 'Robotics' })
+    expect(screen.getByLabelText('New subject')).toHaveValue('')
+
+    fireEvent.click(quickAdd)
+    expect(await screen.findByRole('button', { name: 'Remove Robotics' })).toBeInTheDocument()
+    expect(mockApi.post).toHaveBeenCalledWith('/classes/c1/subjects', { subjectId: 'sub3' })
+  })
+
+  it('AC-09.2 shows "Please enter a subject name." and adds nothing when the name is empty', async () => {
+    await openGrade5T19({})
+    await screen.findByRole('button', { name: 'Science' })
+    mockApi.post.mockRejectedValue(new ApiError(400, { message: 'Please enter a subject name.' }))
+
+    fireEvent.click(screen.getByRole('button', { name: /^add subject$/i }))
+
+    expect(await screen.findByText('Please enter a subject name.')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /^(Maths|Science)$/ })).toHaveLength(2)
+  })
+
+  it('AC-09.3 shows "This subject already exists." and adds nothing for a duplicate name', async () => {
+    await openGrade5T19({})
+    await screen.findByRole('button', { name: 'Science' })
+    mockApi.post.mockRejectedValue(new ApiError(400, { message: 'This subject already exists.' }))
+
+    fireEvent.change(screen.getByLabelText('New subject'), { target: { value: 'maths' } })
+    fireEvent.click(screen.getByRole('button', { name: /^add subject$/i }))
+
+    expect(await screen.findByText('This subject already exists.')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /^(Maths|Science)$/ })).toHaveLength(2)
+  })
+
+  it('AC-10.1 adding a subject to a class POSTs it and shows it in the class subject list immediately', async () => {
+    const routes = await openGrade5T19({})
+    await screen.findByRole('button', { name: 'Science' })
+    expect(screen.queryByRole('button', { name: 'Remove Science' })).not.toBeInTheDocument()
+    mockApi.post.mockImplementation(async () => {
+      const row = { id: 'cs2', subject: science, teacher: null }
+      routes.classSubjects!.c1 = [row]
+      return row
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Science' }))
+
+    expect(await screen.findByRole('button', { name: 'Remove Science' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Teacher for Science' })).toBeInTheDocument()
+    expect(mockApi.post).toHaveBeenCalledWith('/classes/c1/subjects', { subjectId: 'sub2' })
+  })
+
+  it('AC-10.4 a subject already on the class is not offered in the quick-add list again', async () => {
+    await openGrade5T19({ classSubjects: { c1: [mathsRow] } })
+    expect(await screen.findByRole('button', { name: 'Remove Maths' })).toBeInTheDocument()
+
+    expect(screen.getByRole('button', { name: 'Science' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Maths' })).not.toBeInTheDocument()
+  })
+
+  it('AC-10.4 once every catalog subject is on the class the quick-add list offers nothing', async () => {
+    const routes = await openGrade5T19({})
+    await screen.findByRole('button', { name: 'Science' })
+    mockApi.post.mockImplementation(async (_url: string, body: { subjectId: string }) => {
+      const subject = routes.subjects!.find((x) => x.id === body.subjectId)!
+      const row = { id: `cs-${subject.id}`, subject, teacher: null }
+      routes.classSubjects!.c1 = [...routes.classSubjects!.c1, row]
+      return row
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Maths' }))
+    await screen.findByRole('button', { name: 'Remove Maths' })
+    expect(screen.queryByRole('button', { name: 'Maths' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Science' })).toBeInTheDocument()
+  })
+
+  it('AC-10.3 the teacher dropdown lists only the teachers from GET /users?role=teacher (plus Unassigned)', async () => {
+    await openGrade5T19({ classSubjects: { c1: [mathsRow] }, students: [sam] })
+    const select = await screen.findByRole('combobox', { name: 'Teacher for Maths' })
+
+    const names = within(select).getAllByRole('option').map((o) => o.textContent)
+    expect(names).toEqual(['Unassigned', 'Grace Kim', 'Daniel Ortiz'])
+    expect(mockApi.get).toHaveBeenCalledWith('/users?role=teacher')
+  })
+
+  it('AC-10.2 picking a new teacher PATCHes the class-subject teacher and shows it (replacing the old one)', async () => {
+    await openGrade5T19({ classSubjects: { c1: [{ ...mathsRow, teacher: teacherGrace }] } })
+    const select = (await screen.findByRole('combobox', { name: 'Teacher for Maths' })) as HTMLSelectElement
+    await waitFor(() => expect(select).toHaveValue('t1'))
+    mockApi.patch.mockResolvedValue({ id: 'cs1', subject: maths, teacher: teacherDaniel })
+
+    fireEvent.change(select, { target: { value: 't2' } })
+
+    await waitFor(() => expect(mockApi.patch).toHaveBeenCalledWith('/classes/c1/subjects/cs1/teacher', { teacherId: 't2' }))
+    await waitFor(() => expect(select).toHaveValue('t2'))
+    expect(select.selectedOptions[0]).toHaveTextContent('Daniel Ortiz')
+  })
+
+  it('UC-10-E1 picking "Unassigned" sends teacherId: null and the subject stays on the class', async () => {
+    await openGrade5T19({ classSubjects: { c1: [{ ...mathsRow, teacher: teacherGrace }] } })
+    const select = (await screen.findByRole('combobox', { name: 'Teacher for Maths' })) as HTMLSelectElement
+    await waitFor(() => expect(select).toHaveValue('t1'))
+    mockApi.patch.mockResolvedValue({ id: 'cs1', subject: maths, teacher: null })
+
+    fireEvent.change(select, { target: { value: '' } })
+
+    await waitFor(() => expect(mockApi.patch).toHaveBeenCalledWith('/classes/c1/subjects/cs1/teacher', { teacherId: null }))
+    await waitFor(() => expect(select).toHaveValue(''))
+    expect(screen.getByRole('button', { name: 'Remove Maths' })).toBeInTheDocument()
+  })
+
+  it('AC-11.1 assigning a student to a section PATCHes /users/:id/section and shows them in that roster immediately', async () => {
+    const routes = await openGrade5T19({ students: [{ ...sam }, { ...priya }] })
+    mockSectionPatch(routes)
+    const dialog = await openRoster('A')
+    expect(rosterNames(dialog)).toEqual([])
+
+    fireEvent.change(await within(dialog).findByRole('combobox', { name: /student/i }), { target: { value: 'u1' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^assign$/i }))
+
+    await waitFor(() => expect(rosterNames(dialog)).toEqual([expect.stringContaining('Sam Student')]))
+    expect(mockApi.patch).toHaveBeenCalledWith('/users/u1/section', { sectionId: 's1' })
+    expect(rosterNames(dialog).join()).not.toContain('Priya Patel')
+  })
+
+  it('AC-11.1 the roster shows students already assigned to the section when it is opened', async () => {
+    await openGrade5T19({ students: [{ ...sam, sectionId: 's1' }, { ...priya, sectionId: 's2' }] })
+    const dialog = await openRoster('A')
+
+    await waitFor(() => expect(rosterNames(dialog)).toHaveLength(1))
+    expect(rosterNames(dialog)[0]).toContain('Sam Student')
+  })
+
+  it('AC-11.2 reassigning a student moves them out of the old section roster and into the new one', async () => {
+    const routes = await openGrade5T19({ students: [{ ...sam, sectionId: 's1' }] })
+    mockSectionPatch(routes)
+
+    let dialog = await openRoster('B')
+    expect(rosterNames(dialog)).toEqual([])
+    fireEvent.change(await within(dialog).findByRole('combobox', { name: /student/i }), { target: { value: 'u1' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^assign$/i }))
+    await waitFor(() => expect(rosterNames(dialog)).toHaveLength(1))
+    expect(mockApi.patch).toHaveBeenCalledWith('/users/u1/section', { sectionId: 's2' })
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /close/i }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    dialog = await openRoster('A')
+    await waitFor(() => expect(within(dialog).getByRole('combobox', { name: /student/i })).toBeInTheDocument())
+    expect(rosterNames(dialog)).toEqual([])
+  })
+
+  it('UC-11-E2 unassigning sends sectionId: null and removes the student from the roster without deleting them', async () => {
+    const routes = await openGrade5T19({ students: [{ ...sam, sectionId: 's1' }] })
+    mockSectionPatch(routes)
+    const dialog = await openRoster('A')
+    await waitFor(() => expect(rosterNames(dialog)).toHaveLength(1))
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /unassign/i }))
+
+    await waitFor(() => expect(rosterNames(dialog)).toEqual([]))
+    expect(mockApi.patch).toHaveBeenCalledWith('/users/u1/section', { sectionId: null })
+    expect(mockApi.delete).not.toHaveBeenCalled()
+  })
+
+  it('UC-11-E1 with no student accounts the picker shows an empty state and does not crash', async () => {
+    await openGrade5T19({ students: [] })
+    const dialog = await openRoster('A')
+
+    expect(await within(dialog).findByText('No students yet.')).toBeInTheDocument()
+    const assign = within(dialog).queryByRole('button', { name: /^assign$/i })
+    expect(assign === null || (assign as HTMLButtonElement).disabled).toBe(true)
+    expect(rosterNames(dialog)).toEqual([])
+    expect(mockApi.get).toHaveBeenCalledWith('/users?role=student')
+  })
+
+  it('AC-12.2 admin (positive control) sees enabled subject, teacher, roster-assign and unassign controls', async () => {
+    await openGrade5T19({ classSubjects: { c1: [mathsRow] }, students: [{ ...sam, sectionId: 's1' }, { ...priya }] })
+
+    expect(await screen.findByLabelText('New subject')).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^add subject$/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Science' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Remove Maths' })).toBeEnabled()
+    expect(screen.getByRole('combobox', { name: 'Teacher for Maths' })).toBeEnabled()
+
+    const dialog = await openRoster('A')
+    await waitFor(() => expect(rosterNames(dialog)).toHaveLength(1))
+    expect(within(dialog).getByRole('combobox', { name: /student/i })).toBeEnabled()
+    expect(within(dialog).getByRole('button', { name: /^assign$/i })).toBeEnabled()
+    expect(within(dialog).getByRole('button', { name: /unassign/i })).toBeEnabled()
+  })
+
+  it.each([
+    ['teacher', teacher],
+    ['student', student],
+  ])('AC-12.2 %s sees the subjects but no enabled subject or student-assignment write controls', async (_label, viewer) => {
+    await openGrade5T19(
+      { classSubjects: { c1: [mathsRow] }, students: [{ ...sam, sectionId: 's1' }, { ...priya }] },
+      { user: viewer },
+    )
+    expect(await screen.findByText('Maths')).toBeInTheDocument()
+
+    expect(isHiddenOrDisabled(screen.queryByLabelText('New subject'))).toBe(true)
+    expect(isHiddenOrDisabled(screen.queryByRole('button', { name: /^add subject$/i }))).toBe(true)
+    expect(isHiddenOrDisabled(screen.queryByRole('button', { name: 'Science' }))).toBe(true)
+    expect(isHiddenOrDisabled(screen.queryByRole('button', { name: 'Remove Maths' }))).toBe(true)
+    expect(isHiddenOrDisabled(screen.queryByRole('combobox', { name: 'Teacher for Maths' }))).toBe(true)
+
+    // If the roster can still be opened read-only, it must not offer write controls.
+    const viewRoster = screen.queryAllByRole('button', { name: /view roster/i })[0]
+    if (viewRoster && !(viewRoster as HTMLButtonElement).disabled) {
+      fireEvent.click(viewRoster)
+      const dialog = await screen.findByRole('dialog')
+      expect(isHiddenOrDisabled(within(dialog).queryByRole('combobox', { name: /student/i }))).toBe(true)
+      expect(isHiddenOrDisabled(within(dialog).queryByRole('button', { name: /^assign$/i }))).toBe(true)
+      expect(isHiddenOrDisabled(within(dialog).queryByRole('button', { name: /unassign/i }))).toBe(true)
+    }
+  })
+
+  // @testing-library/user-event is not installed, so Escape is sent with
+  // fireEvent.keyDown to the focused element (what userEvent.keyboard does).
+  const pressEscapeOnFocused = () => fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape', code: 'Escape' })
+
+  async function openRosterViaButton() {
+    await openGrade5T19({ students: [{ ...sam, sectionId: 's1' }] })
+    const row = screen.getByText(sectionLabel('A')).parentElement!
+    const trigger = within(row).getByRole('button', { name: /view roster/i })
+    trigger.focus()
+    fireEvent.click(trigger)
+    const dialog = await screen.findByRole('dialog')
+    return { trigger, dialog }
+  }
+
+  it('roster dialog moves focus into the dialog when opened', async () => {
+    const { dialog } = await openRosterViaButton()
+
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true))
+    expect(document.activeElement).not.toBe(document.body)
+  })
+
+  it('roster dialog closes on Escape sent to the focused element and returns focus to "View roster"', async () => {
+    const { trigger } = await openRosterViaButton()
+    await waitFor(() => expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true))
+
+    pressEscapeOnFocused()
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(trigger).toHaveFocus())
+  })
+
+  it('roster dialog closes with the Close button and returns focus to "View roster"', async () => {
+    const { trigger, dialog } = await openRosterViaButton()
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true))
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /close/i }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(trigger).toHaveFocus())
+  })
+
+  it('AC-10.4 when GET /classes/:id/subjects fails, no quick-add buttons are offered and an alert is shown', async () => {
+    const routes: GetRoutes = {
+      classes: [grade5],
+      sections: { c1: [sectionA, sectionB] },
+      teachers: [teacherGrace, teacherDaniel],
+      subjects: [maths, science],
+      students: [],
+    }
+    mockGet(routes)
+    const base = mockApi.get.getMockImplementation() as (url: string) => Promise<unknown>
+    mockApi.get.mockImplementation((url: string) =>
+      url === '/classes/c1/subjects' ? Promise.reject(new TypeError('Failed to fetch')) : base(url),
+    )
+    renderPage()
+    await selectClass('Grade 5')
+    await screen.findByText(sectionLabel('A'))
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    await waitFor(() => expect(mockApi.get).toHaveBeenCalledWith('/subjects'))
+    expect(screen.queryByRole('button', { name: 'Maths' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Science' })).not.toBeInTheDocument()
+  })
+
+  it('AC-10.4 while class subjects are still loading, no quick-add buttons are offered', async () => {
+    const routes: GetRoutes = {
+      classes: [grade5],
+      sections: { c1: [sectionA, sectionB] },
+      teachers: [teacherGrace, teacherDaniel],
+      subjects: [maths, science],
+      students: [],
+    }
+    mockGet(routes)
+    const base = mockApi.get.getMockImplementation() as (url: string) => Promise<unknown>
+    const pending = deferred<ClassSubjectRow[]>()
+    let subjectsSettled: Promise<unknown> = Promise.resolve()
+    mockApi.get.mockImplementation((url: string) => {
+      if (url === '/classes/c1/subjects') return pending.promise
+      const result = base(url)
+      if (url === '/subjects') subjectsSettled = Promise.resolve(result).catch(() => undefined)
+      return result
+    })
+    renderPage()
+    await selectClass('Grade 5')
+    await screen.findByText(sectionLabel('A'))
+    await waitFor(() => expect(mockApi.get).toHaveBeenCalledWith('/classes/c1/subjects'))
+    await waitFor(() => expect(mockApi.get).toHaveBeenCalledWith('/subjects'))
+    // Deterministic: wait until the /subjects response has settled and React has flushed its update.
+    await act(async () => {
+      await subjectsSettled
+    })
+
+    expect(screen.queryByRole('button', { name: 'Maths' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Science' })).not.toBeInTheDocument()
+
+    pending.resolve([mathsRow])
+    expect(await screen.findByRole('button', { name: 'Science' })).toBeInTheDocument()
   })
 })

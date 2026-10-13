@@ -1,9 +1,11 @@
-import { BookOpen, Pencil, Plus, Trash2, X } from 'lucide-react'
+import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { AuthUser } from '../lib/auth'
 import { errorMessage } from '../lib/errorMessage'
 import { api, ApiError } from '../lib/http'
-import { ClassSectionsPanel, type TeacherOption } from './ClassSectionsPanel'
+import { ClassSubjectsPanel } from './ClassSubjectsPanel'
+import type { TeacherOption } from '../lib/types'
+import { ClassSectionsPanel } from './ClassSectionsPanel'
 import { DashboardShell } from './DashboardShell'
 
 interface ClassesPageProps {
@@ -12,29 +14,9 @@ interface ClassesPageProps {
   onSignOut: () => void
 }
 
-interface SubjectAssignment {
-  name: string
-  teacherId: string | null
-}
+type SchoolClass = ApiClass
 
-interface SchoolClass {
-  id: string
-  name: string
-  subjects: SubjectAssignment[]
-}
-
-const SUBJECT_LIBRARY = [
-  'Mathematics',
-  'English',
-  'Science',
-  'Social Studies',
-  'Art',
-  'Physical Education',
-  'Computer Science',
-  'Music',
-]
-
-/** Shape returned by the /classes API; subjects are still mocked locally (T-019). */
+/** Shape returned by the /classes API; subjects and sections are loaded by their own panels. */
 interface ApiClass {
   id: string
   name: string
@@ -42,11 +24,7 @@ interface ApiClass {
 
 type LoadStatus = 'loading' | 'ready' | 'error'
 
-function withMockedDetails(apiClass: ApiClass, existing?: SchoolClass): SchoolClass {
-  return { subjects: [], ...existing, ...apiClass }
-}
-
-/** Admin-only screen for managing classes (persisted via the API), plus sections (persisted) and still-mocked subjects. */
+/** Admin-only screen for managing classes (persisted via the API), plus their sections and subjects (persisted). */
 export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
   const [classes, setClasses] = useState<SchoolClass[]>([])
   const [loadStatus, setLoadStatus] = useState<LoadStatus>('loading')
@@ -61,8 +39,6 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
   const [editingClassName, setEditingClassName] = useState('')
   const [isSavingRename, setIsSavingRename] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
-
-  const [newSubject, setNewSubject] = useState('')
 
   const canManageClasses = user.role === 'admin'
 
@@ -89,7 +65,7 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
   }, [canManageClasses])
 
   const applyLoadedClasses = useCallback((apiClasses: ApiClass[]) => {
-    setClasses((prev) => apiClasses.map((apiClass) => withMockedDetails(apiClass, prev.find((c) => c.id === apiClass.id))))
+    setClasses(apiClasses)
     setLoadStatus('ready')
   }, [])
 
@@ -152,7 +128,7 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
     setIsCreating(true)
     try {
       const created = await api.post<ApiClass>('/classes', { name })
-      setClasses((prev) => [...prev, withMockedDetails(created)])
+      setClasses((prev) => [...prev, created])
       setSelectedClassId(created.id)
       setNewClassName('')
     } catch (error) {
@@ -203,40 +179,6 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
     } finally {
       setIsDeleting(false)
     }
-  }
-
-  const addSubject = (subject: string) => {
-    if (!selectedClass) return
-    if (selectedClass.subjects.some((existing) => existing.name === subject)) return
-    updateClass(selectedClass.id, (schoolClass) => ({
-      ...schoolClass,
-      subjects: [...schoolClass.subjects, { name: subject, teacherId: null }],
-    }))
-  }
-
-  const removeSubject = (subject: string) => {
-    if (!selectedClass) return
-    updateClass(selectedClass.id, (schoolClass) => ({
-      ...schoolClass,
-      subjects: schoolClass.subjects.filter((existing) => existing.name !== subject),
-    }))
-  }
-
-  const handleAssignSubjectTeacher = (subject: string, teacherId: string) => {
-    if (!selectedClass) return
-    updateClass(selectedClass.id, (schoolClass) => ({
-      ...schoolClass,
-      subjects: schoolClass.subjects.map((existing) =>
-        existing.name === subject ? { ...existing, teacherId: teacherId || null } : existing,
-      ),
-    }))
-  }
-
-  const handleAddCustomSubject = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const subject = newSubject.trim()
-    if (subject) addSubject(subject)
-    setNewSubject('')
   }
 
   return (
@@ -373,80 +315,14 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
                   )}
                 </div>
 
-                <section>
-                  <div className="flex items-center gap-2">
-                    <span className="flex size-8 items-center justify-center rounded-full bg-violet-50 text-violet-600">
-                      <BookOpen className="size-4" />
-                    </span>
-                    <h3 className="text-sm font-semibold text-slate-700">Subjects</h3>
-                  </div>
-
-                  <div className="mt-3 space-y-2">
-                    {selectedClass.subjects.map((subject) => (
-                      <div
-                        key={subject.name}
-                        className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5"
-                      >
-                        <span className="text-sm font-medium text-slate-900">{subject.name}</span>
-                        <select
-                          value={subject.teacherId ?? ''}
-                          onChange={(event) => handleAssignSubjectTeacher(subject.name, event.target.value)}
-                          className="ml-auto rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                        >
-                          <option value="">Unassigned</option>
-                          {teachers.map((teacher) => (
-                            <option key={teacher.id} value={teacher.id}>
-                              {teacher.name}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          onClick={() => removeSubject(subject.name)}
-                          className="text-slate-400 transition-colors hover:text-red-600"
-                          aria-label={`Remove ${subject.name}`}
-                        >
-                          <X className="size-4" />
-                        </button>
-                      </div>
-                    ))}
-                    {selectedClass.subjects.length === 0 && (
-                      <p className="text-xs text-slate-400">No subjects assigned yet.</p>
-                    )}
-                  </div>
-
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {SUBJECT_LIBRARY.filter(
-                      (subject) => !selectedClass.subjects.some((existing) => existing.name === subject),
-                    ).map((subject) => (
-                      <button
-                        key={subject}
-                        type="button"
-                        onClick={() => addSubject(subject)}
-                        className="flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-100"
-                      >
-                        <Plus className="size-3.5" />
-                        {subject}
-                      </button>
-                    ))}
-                  </div>
-
-                  <form onSubmit={handleAddCustomSubject} className="mt-3 flex max-w-xs gap-2">
-                    <input
-                      value={newSubject}
-                      onChange={(event) => setNewSubject(event.target.value)}
-                      placeholder="Add another subject"
-                      className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                    />
-                    <button
-                      type="submit"
-                      className="flex shrink-0 items-center justify-center rounded-lg border border-slate-300 px-3 py-2 text-slate-600 transition-colors hover:bg-slate-50"
-                      aria-label="Add subject"
-                    >
-                      <Plus className="size-4" />
-                    </button>
-                  </form>
-                </section>
+                <ClassSubjectsPanel
+                  key={`subjects-${selectedClass.id}`}
+                  classId={selectedClass.id}
+                  canManage={canManageClasses}
+                  teachers={teachers}
+                  teachersError={teachersError}
+                  onClassGone={handleClassGone}
+                />
 
                 <ClassSectionsPanel
                   key={selectedClass.id}

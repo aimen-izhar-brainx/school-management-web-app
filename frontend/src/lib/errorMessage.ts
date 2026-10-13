@@ -6,3 +6,5 @@ export const GENERIC_ERROR = 'Something went wrong. Please try again.'
 export function errorMessage(error: unknown): string {
   return error instanceof ApiError && error.status < 500 ? error.message : GENERIC_ERROR
 }
+
+export const isNotFound = (error: unknown) => error instanceof ApiError && error.status === 404

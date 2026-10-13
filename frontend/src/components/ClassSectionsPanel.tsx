@@ -1,12 +1,10 @@
 import { Plus, Trash2, UserRound, Users } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { errorMessage } from '../lib/errorMessage'
-import { api, ApiError } from '../lib/http'
-
-export interface TeacherOption {
-  id: string
-  name: string
-}
+import { compareByName } from '../lib/compareByName'
+import { errorMessage, isNotFound } from '../lib/errorMessage'
+import { api } from '../lib/http'
+import type { TeacherOption } from '../lib/types'
+import { SectionRosterDialog } from './SectionRosterDialog'
 
 interface SectionRow {
   id: string
@@ -27,11 +25,6 @@ interface ClassSectionsPanelProps {
 
 type LoadStatus = 'loading' | 'ready' | 'error'
 
-const isNotFound = (error: unknown) => error instanceof ApiError && error.status === 404
-
-const compareByName = (a: { name: string }, b: { name: string }) =>
-  a.name.toLowerCase().localeCompare(b.name.toLowerCase())
-
 /** Sections of one class, backed by /classes/:classId/sections. Render with `key={classId}` so state resets per class. */
 export function ClassSectionsPanel({
   classId,
@@ -45,12 +38,14 @@ export function ClassSectionsPanel({
   const [status, setStatus] = useState<LoadStatus>('loading')
   const [notice, setNotice] = useState<string | null>(null)
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({})
+  const [rosterSection, setRosterSection] = useState<SectionRow | null>(null)
   const [busyIds, setBusyIds] = useState<string[]>([])
 
   const [newName, setNewName] = useState('')
   const [addError, setAddError] = useState<string | null>(null)
   const [isAdding, setIsAdding] = useState(false)
 
+  const inFlight = useRef(new Set<string>())
   const isMounted = useRef(true)
   const latestRequest = useRef(0)
   const onClassGoneRef = useRef(onClassGone)
@@ -84,8 +79,11 @@ export function ClassSectionsPanel({
     }
   }, [loadSections])
 
-  const setBusy = (id: string, busy: boolean) =>
+  const setBusy = (id: string, busy: boolean) => {
+    if (busy) inFlight.current.add(id)
+    else inFlight.current.delete(id)
     setBusyIds((prev) => (busy ? [...prev, id] : prev.filter((existing) => existing !== id)))
+  }
 
   const setRowError = (id: string, message: string | null) =>
     setRowErrors((prev) => {
@@ -97,7 +95,7 @@ export function ClassSectionsPanel({
 
   /** Runs a per-section write: guards re-entry, maps failures to a message, and resyncs on 404. */
   const runRowAction = async (id: string, action: () => Promise<void>) => {
-    if (busyIds.includes(id)) return
+    if (inFlight.current.has(id)) return
     setNotice(null)
     setRowError(id, null)
     setBusy(id, true)
@@ -204,15 +202,24 @@ export function ClassSectionsPanel({
                   {className} &ndash; {section.name}
                 </span>
                 {canManage && (
-                  <button
-                    type="button"
-                    onClick={() => handleRemove(section.id)}
-                    disabled={busy}
-                    className="flex items-center gap-1 text-xs font-medium text-red-600 transition-colors hover:text-red-700 disabled:opacity-60"
-                  >
-                    <Trash2 className="size-3.5" />
-                    Remove
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setRosterSection(section)}
+                      className="text-xs font-medium text-violet-600 transition-colors hover:text-violet-700"
+                    >
+                      View roster
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRemove(section.id)}
+                      disabled={busy}
+                      className="flex items-center gap-1 text-xs font-medium text-red-600 transition-colors hover:text-red-700 disabled:opacity-60"
+                    >
+                      <Trash2 className="size-3.5" />
+                      Remove
+                    </button>
+                  </div>
                 )}
               </div>
 
@@ -286,6 +293,15 @@ export function ClassSectionsPanel({
             </p>
           )}
         </>
+      )}
+      {rosterSection && (
+        <SectionRosterDialog
+          key={rosterSection.id}
+          sectionId={rosterSection.id}
+          title={`Students in ${className} \u2013 ${rosterSection.name}`}
+          onClose={() => setRosterSection(null)}
+          onNotFound={() => void loadSections()}
+        />
       )}
     </section>
   )
