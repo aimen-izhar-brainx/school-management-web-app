@@ -10,6 +10,9 @@ import { PeriodsService } from '../periods/periods.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 const SECTION_NOT_FOUND = 'This section no longer exists.';
+const PERIOD_NOT_FOUND = 'This period does not exist.';
+const SUBJECT_NOT_FOUND = 'This subject no longer exists.';
+const BREAK_PERIOD = 'Cannot schedule a subject during a break.';
 const NOT_ON_CLASS = 'This subject is not assigned to this class.';
 const NO_TEACHER = 'Assign a teacher to this subject first.';
 const SLOT_CHANGED = 'This slot was just changed by someone else. Please try again.';
@@ -51,6 +54,8 @@ export class TimetableService {
 
   async place(sectionId: string, periodId: string, dayOfWeek: DayOfWeek, subjectId: string) {
     const section = await this.findSection(sectionId);
+    await this.assertSchedulablePeriod(periodId);
+    await this.assertSubjectExists(subjectId);
     const key = { sectionId, periodId, dayOfWeek };
     let teacherId: string | undefined;
     // Lock the ClassSubject row so a concurrent class-subject removal waits for this write.
@@ -92,6 +97,23 @@ export class TimetableService {
     });
     if (!section) throw new NotFoundException(SECTION_NOT_FOUND);
     return section;
+  }
+
+  private async assertSchedulablePeriod(periodId: string) {
+    const period = await this.prisma.period.findUnique({
+      where: { id: periodId },
+      select: { isBreak: true },
+    });
+    if (!period) throw new NotFoundException(PERIOD_NOT_FOUND);
+    if (period.isBreak) throw new BadRequestException(BREAK_PERIOD);
+  }
+
+  private async assertSubjectExists(subjectId: string) {
+    const subject = await this.prisma.subject.findUnique({
+      where: { id: subjectId },
+      select: { id: true },
+    });
+    if (!subject) throw new NotFoundException(SUBJECT_NOT_FOUND);
   }
 
   private async lockTeacher(tx: Prisma.TransactionClient, classId: string, subjectId: string) {

@@ -15,7 +15,7 @@
 | T-020 | Fixed Period schedule (backend) | DONE | 1 | |
 | T-021 | TimetableEntry CRUD API (backend, no conflict checking yet) | DONE | 1 | UC-10-E2 race closed with ClassSubject row lock |
 | T-022 | Teacher double-booking conflict detection (backend) | DONE | 1 | |
-| T-030 | Reject invalid timetable entries (backend) | TODO | 0 | |
+| T-030 | Reject invalid timetable entries (backend) | DONE | 1 | |
 | T-023 | Wire TimetablePage admin builder (frontend) | TODO | 0 | |
 | T-024 | GET /timetable/me endpoint (backend) | TODO | 0 | |
 | T-025 | Wire MyTimetablePage for teachers and students (frontend) | TODO | 0 | |

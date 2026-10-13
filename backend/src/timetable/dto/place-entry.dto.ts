@@ -1,11 +1,9 @@
 import { Transform } from 'class-transformer';
-import { IsNotEmpty, IsString } from 'class-validator';
-
-const MESSAGE = 'Please choose a subject.';
+import { Matches } from 'class-validator';
 
 export class PlaceEntryDto {
+  // One validator only, so a missing value yields a single message. Non-strings and blanks fail too.
   @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
-  @IsString({ message: MESSAGE })
-  @IsNotEmpty({ message: MESSAGE })
+  @Matches(/\S/, { message: 'subjectId is required.' })
   subjectId!: string;
 }

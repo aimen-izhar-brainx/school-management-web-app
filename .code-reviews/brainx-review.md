@@ -1,11 +1,11 @@
 ---
-diff_hash: 67734f5671375b14323d21e821de178e2987378f1b9df0474eb9f2b48ef02651
-reviewed_at: 2026-10-13T10:49:36Z
+diff_hash: 7ef824172660cfd4d834c109df1ecff1062f859016e0b805f6af7f7e77034e15
+reviewed_at: 2026-10-13T11:00:37Z
 ---
 
 ## Summary
 
-T-022 adds teacher double-booking detection to the timetable: a new unique index on `TimetableEntry(teacherId, periodId, dayOfWeek)` with migration, an in-transaction pre-check (`assertTeacherFree`) that returns a 400 naming the conflicting section, a one-shot retry for concurrent same-section upserts, and a P2002 fallback that maps the DB unique violation to the same conflict error. The Prisma error-meta parsing was extracted from `ClassSubjectsService` into `common/prisma-errors.ts`. A real-DB spec covers AC-14.x, UC-14-E1/E2 and AC-23.x. Stack: NestJS + Prisma. The logic is sound (the loser of a teacher race gets the same 400 as the pre-check, the section-slot race is retried, own-section replacement is excluded from the conflict query). Findings are around migration safety and error-matching robustness.
+T-030 hardens `PUT /sections/:sectionId/timetable/:periodId/:dayOfWeek`: `place` now rejects unknown periods (404), break periods (400) and unknown subjects (404) before the transactional write, and `PlaceEntryDto` is reduced to a single `@Matches(/\S/)` validator so a missing/blank/non-string `subjectId` yields one message naming the field. A new real-DB spec covers AC-24.1–24.5, UC-24-E1 and UC-24-E2 (including check order and client-supplied `teacherId` being ignored). Ticket and status files are updated, and the previous review file is removed. Stack: NestJS + Prisma. The logic is correct: the check order is section, period, subject, then class membership/teacher inside the lock; `teacherId` is not on the DTO so it cannot be client-controlled (the global whitelist/ignore behaviour is exercised by the test); the non-string case fails `@Matches`. No correctness or security issues found. Only minor hygiene items.
 
 ## Findings
 
@@ -13,25 +13,23 @@ T-022 adds teacher double-booking detection to the timetable: a new unique index
 
 ### High (0)
 
-### Medium (1)
-- **backend/prisma/migrations/20261013120000_timetable_teacher_slot_unique/migration.sql:2** — The migration creates a UNIQUE index on existing data, but T-021 (already shipped) explicitly allowed teacher double-booking ("no conflict checking yet"). Any shared/staging/prod database that already holds two entries for the same teacher/period/day will make `prisma migrate deploy` fail midway, blocking the release. *(correctness / migrations)*
-  - status: ignored
-  - dev_reasoning: No environment can contain T-021 without T-022. Both are local commits on the unpushed, unmerged `academic-management` branch (no remote branch contains T-021's commit), so they ship together and the TimetableEntry table is created and constrained in the same deploy. The only database with T-021 applied, the local dev DB, was checked for duplicate (teacherId, periodId, dayOfWeek) rows before migrating, and there were none.
-  - ai_reasoning: Either add a clearly labelled pre-step (separate data migration or script) that detects/resolves existing duplicates before the index is created, or confirm and note in the ticket that no environment holds such rows yet.
+### Medium (0)
 
-### Low (1)
-- **backend/src/timetable/timetable.service.ts:134** — Race/conflict classification relies on substring matching of a JSON-stringified blob (`violatedConstraint(e).includes('sectionId' | 'teacherId')`). It is fragile to driver-adapter output shape changes, and if a retried write hits the section-slot P2002 a second time it falls through `translate` and surfaces as a raw 500 instead of a handled error. *(maintainability / error handling)*
-  - status: open
-  - dev_reasoning: N/A
-  - ai_reasoning: Have `violatedConstraint` return structured data (field list / index name) and compare exact fields, and map a repeated section-slot P2002 to a 400/409 (or retry in a small bounded loop) rather than rethrowing the raw Prisma error.
+### Low (2)
+- **backend/tsconfig.build.tsbuildinfo:1** — A generated TypeScript incremental-build artifact is tracked in git and modified by this commit, adding noise and merge-conflict potential unrelated to T-030. *(maintainability)*
+  - status: ignored
+  - dev_reasoning: Unrelated to T-030. The pre-commit hook's own `git add -A` stages this file. Untracking it and adding `*.tsbuildinfo` to .gitignore is a repo-hygiene change outside ticket scope, deferred for the repo owner's decision (same as earlier commits).
+  - ai_reasoning: Add `*.tsbuildinfo` to `.gitignore` and `git rm --cached` the file, or unstage this change (`git restore --staged backend/tsconfig.build.tsbuildinfo`) so the ticket diff stays focused.
+- **backend/src/timetable/dto/place-entry.dto.ts:7** — The error message changed to `'subjectId is required.'`, while the sibling `ClassSubjectDto` (`classes/dto/class-subject.dto.ts`) still uses the user-facing `'Please choose a subject.'` for the same field. The two subject-picker endpoints now report the same condition differently. *(consistency)*
+  - status: ignored
+  - dev_reasoning: Intentional. UC-24-E1 requires the API error for a missing field to name the field. ClassSubjectDto's message is shown in the class-subject picker UI and isn't covered by UC-24.
+  - ai_reasoning: This is intentional for UC-24-E1 (the message must name the field), so it is low risk. Consider aligning wording across both DTOs or noting the divergence in a comment.
 
 ## Reviewed files
 - .code-reviews/brainx-review.md (deleted; previous review, replaced by this one)
-- backend/prisma/migrations/20261013120000_timetable_teacher_slot_unique/migration.sql
-- backend/prisma/schema.prisma
-- backend/src/classes/class-subjects.service.ts
-- backend/src/common/prisma-errors.ts
-- backend/src/timetable/timetable-conflicts.spec.ts
+- backend/src/timetable/dto/place-entry.dto.ts
+- backend/src/timetable/timetable-validation.spec.ts
 - backend/src/timetable/timetable.service.ts
+- backend/tsconfig.build.tsbuildinfo (generated; skimmed)
 - tickets/STATUS.md
-- tickets/T-022.md
+- tickets/T-030.md
