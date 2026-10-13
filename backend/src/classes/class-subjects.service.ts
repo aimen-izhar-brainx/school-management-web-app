@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client.js';
+import { violatedConstraintFields } from '../common/prisma-errors.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { UsersService } from '../users/users.service.js';
 import { ClassesService } from './classes.service.js';
@@ -123,15 +124,10 @@ export class ClassSubjectsService {
     return e;
   }
 
-  // The driver adapter reports the violated FK as meta.driverAdapterError.cause.constraint
-  // ({ fields: ['teacherId'] } or { index: 'ClassSubject_teacherId_fkey' }); older engines use meta.field_name.
   private translateForeignKey(e: unknown): Error {
-    const meta = (e as { meta?: Record<string, unknown> }).meta ?? {};
-    const constraint = (meta.driverAdapterError as { cause?: { constraint?: unknown } } | undefined)
-      ?.cause?.constraint;
-    const where = JSON.stringify([constraint ?? null, meta.field_name ?? null]);
-    if (where.includes('teacherId')) return new BadRequestException(NOT_A_TEACHER);
-    if (where.includes('classId')) return new NotFoundException(CLASS_NOT_FOUND);
+    const fields = violatedConstraintFields(e) ?? [];
+    if (fields.includes('teacherId')) return new BadRequestException(NOT_A_TEACHER);
+    if (fields.includes('classId')) return new NotFoundException(CLASS_NOT_FOUND);
     return new NotFoundException(SUBJECT_NOT_FOUND);
   }
 }

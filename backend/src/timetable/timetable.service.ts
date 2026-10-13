@@ -1,11 +1,19 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type { DayOfWeek, Prisma } from '../generated/prisma/client.js';
+import { prismaErrorCode, violatedConstraintFields } from '../common/prisma-errors.js';
 import { PeriodsService } from '../periods/periods.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 const SECTION_NOT_FOUND = 'This section no longer exists.';
 const NOT_ON_CLASS = 'This subject is not assigned to this class.';
 const NO_TEACHER = 'Assign a teacher to this subject first.';
+const SLOT_CHANGED = 'This slot was just changed by someone else. Please try again.';
+const TEACHER_BUSY = 'Teacher is already scheduled at this time.';
 const ENTRY_SELECT = {
   id: true,
   periodId: true,
@@ -13,6 +21,13 @@ const ENTRY_SELECT = {
   subject: { select: { id: true, name: true } },
   teacher: { select: { id: true, name: true } },
 } as const;
+
+type TeacherSlot = {
+  sectionId: string;
+  teacherId: string;
+  periodId: string;
+  dayOfWeek: DayOfWeek;
+};
 
 @Injectable()
 export class TimetableService {
@@ -37,10 +52,12 @@ export class TimetableService {
   async place(sectionId: string, periodId: string, dayOfWeek: DayOfWeek, subjectId: string) {
     const section = await this.findSection(sectionId);
     const key = { sectionId, periodId, dayOfWeek };
-    try {
-      // Lock the ClassSubject row so a concurrent class-subject removal waits for this write.
-      return await this.prisma.$transaction(async (tx) => {
-        const teacherId = await this.lockTeacher(tx, section.classId, subjectId);
+    let teacherId: string | undefined;
+    // Lock the ClassSubject row so a concurrent class-subject removal waits for this write.
+    const write = () =>
+      this.prisma.$transaction(async (tx) => {
+        teacherId = await this.lockTeacher(tx, section.classId, subjectId);
+        await this.assertTeacherFree(tx, { ...key, teacherId });
         return tx.timetableEntry.upsert({
           where: { sectionId_periodId_dayOfWeek: key },
           create: { ...key, subjectId, teacherId },
@@ -48,14 +65,24 @@ export class TimetableService {
           select: ENTRY_SELECT,
         });
       });
+    try {
+      try {
+        return await write();
+      } catch (e) {
+        // Two concurrent inserts for the same slot: the loser retries once and becomes an update.
+        if (!this.isSectionSlotRace(e)) throw e;
+        return await write();
+      }
     } catch (e) {
-      throw this.translate(e);
+      throw await this.translate(e, { ...key, teacherId });
     }
   }
 
   async clear(sectionId: string, periodId: string, dayOfWeek: DayOfWeek) {
     await this.findSection(sectionId);
-    await this.prisma.timetableEntry.deleteMany({ where: { sectionId, periodId, dayOfWeek } });
+    await this.prisma.timetableEntry.deleteMany({
+      where: { sectionId, periodId, dayOfWeek },
+    });
   }
 
   private async findSection(sectionId: string) {
@@ -76,11 +103,61 @@ export class TimetableService {
     return rows[0].teacherId;
   }
 
-  // P2003 = section/period/subject/teacher vanished mid-request.
-  private translate(e: unknown): unknown {
-    if ((e as { code?: string })?.code === 'P2003') {
+  private async assertTeacherFree(tx: Prisma.TransactionClient, slot: TeacherSlot) {
+    const conflict = await this.findTeacherConflict(tx, slot);
+    if (conflict) throw conflict;
+  }
+
+  // Looks for the teacher's booking at this slot in a different section.
+  private async findTeacherConflict(
+    db: Pick<Prisma.TransactionClient, 'timetableEntry'>,
+    slot: TeacherSlot,
+  ) {
+    const { sectionId, teacherId, periodId, dayOfWeek } = slot;
+    const other = await db.timetableEntry.findFirst({
+      where: { teacherId, periodId, dayOfWeek, sectionId: { not: sectionId } },
+      select: {
+        section: {
+          select: { id: true, name: true, class: { select: { name: true } } },
+        },
+      },
+    });
+    if (!other) return null;
+    const sectionLabel = `${other.section.class.name}-${other.section.name}`;
+    return new BadRequestException({
+      statusCode: 400,
+      error: 'Bad Request',
+      message: `Teacher is already scheduled for ${sectionLabel} at this time.`,
+      conflict: { sectionId: other.section.id, sectionLabel },
+    });
+  }
+
+  // P2002 on the section-slot unique (its columns include sectionId; the teacher unique's don't).
+  private isSectionSlotRace(e: unknown) {
+    return (
+      prismaErrorCode(e) === 'P2002' && violatedConstraintFields(e)?.includes('sectionId') === true
+    );
+  }
+
+  // P2002 on the teacher unique = concurrent booking (race fallback), P2003 = row vanished mid-request.
+  private async translate(
+    e: unknown,
+    slot: Omit<TeacherSlot, 'teacherId'> & { teacherId?: string },
+  ) {
+    const code = prismaErrorCode(e);
+    if (code === 'P2003') {
       return new BadRequestException('This slot can no longer be saved. Please refresh and retry.');
     }
+    if (code === 'P2002' && slot.teacherId && violatedConstraintFields(e)?.includes('teacherId')) {
+      return (
+        (await this.findTeacherConflict(this.prisma, {
+          ...slot,
+          teacherId: slot.teacherId,
+        })) ?? new BadRequestException(TEACHER_BUSY)
+      );
+    }
+    // Section-slot P2002 on the retry: someone else keeps changing this slot.
+    if (this.isSectionSlotRace(e)) return new ConflictException(SLOT_CHANGED);
     return e;
   }
 }

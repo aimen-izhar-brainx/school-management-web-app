@@ -146,6 +146,7 @@ model TimetableEntry {
   teacher   User      @relation("EntryTeacher", fields: [teacherId], references: [id])
 
   @@unique([sectionId, periodId, dayOfWeek])
+  @@unique([teacherId, periodId, dayOfWeek])
   @@index([periodId])
   @@index([subjectId])
   @@index([teacherId])
