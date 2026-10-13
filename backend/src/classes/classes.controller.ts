@@ -39,6 +39,13 @@ export class ClassesController {
     return this.classes.rename(id, dto.name);
   }
 
+  @Get(':id/delete-impact')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  deleteImpact(@Param('id') id: string) {
+    return this.classes.deleteImpact(id);
+  }
+
   @Delete(':id')
   @HttpCode(204)
   @UseGuards(JwtAuthGuard, RolesGuard)

@@ -38,6 +38,26 @@ export class ClassesService {
     }
   }
 
+  async deleteImpact(id: string) {
+    const found = await this.prisma.class.findUnique({
+      where: { id },
+      select: {
+        name: true,
+        _count: { select: { sections: true, classSubjects: true } },
+      },
+    });
+    if (!found) throw new NotFoundException(NOT_FOUND);
+    const students = await this.prisma.user.count({
+      where: { role: 'student', section: { classId: id } },
+    });
+    return {
+      className: found.name,
+      sections: found._count.sections,
+      subjectAssignments: found._count.classSubjects,
+      students,
+    };
+  }
+
   async remove(id: string) {
     try {
       await this.prisma.class.delete({ where: { id } });
