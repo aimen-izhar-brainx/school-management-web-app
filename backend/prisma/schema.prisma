@@ -34,6 +34,7 @@ model User {
   passwordResets       PasswordResetToken[]
   classTeacherSections Section[]            @relation("SectionClassTeacher")
   taughtClassSubjects  ClassSubject[]       @relation("SubjectTeacher")
+  timetableEntries     TimetableEntry[]     @relation("EntryTeacher")
 
   @@index([sectionId])
 }
@@ -84,6 +85,8 @@ model Section {
   updatedAt      DateTime @updatedAt
   students       User[]   @relation("StudentSection")
 
+  timetableEntries TimetableEntry[]
+
   @@unique([classId, name])
   @@index([classTeacherId])
 }
@@ -93,7 +96,8 @@ model Subject {
   name      String   @unique @db.Citext
   createdAt DateTime @default(now())
 
-  classSubjects ClassSubject[]
+  classSubjects    ClassSubject[]
+  timetableEntries TimetableEntry[]
 }
 
 model ClassSubject {
@@ -117,6 +121,8 @@ model Period {
   endTime   String
   isBreak   Boolean @default(false)
   label     String?
+
+  timetableEntries TimetableEntry[]
 }
 
 enum DayOfWeek {
@@ -125,4 +131,22 @@ enum DayOfWeek {
   wed
   thu
   fri
+}
+
+model TimetableEntry {
+  id        String    @id @default(cuid())
+  sectionId String
+  section   Section   @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  periodId  String
+  period    Period    @relation(fields: [periodId], references: [id])
+  dayOfWeek DayOfWeek
+  subjectId String
+  subject   Subject   @relation(fields: [subjectId], references: [id])
+  teacherId String
+  teacher   User      @relation("EntryTeacher", fields: [teacherId], references: [id])
+
+  @@unique([sectionId, periodId, dayOfWeek])
+  @@index([periodId])
+  @@index([subjectId])
+  @@index([teacherId])
 }

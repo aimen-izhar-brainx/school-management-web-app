@@ -10,6 +10,7 @@ import { MailModule } from './mail/mail.module.js';
 import { PeriodsModule } from './periods/periods.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { SubjectsModule } from './subjects/subjects.module.js';
+import { TimetableModule } from './timetable/timetable.module.js';
 import { UsersModule } from './users/users.module.js';
 
 @Module({
@@ -23,6 +24,7 @@ import { UsersModule } from './users/users.module.js';
     ClassesModule,
     SubjectsModule,
     PeriodsModule,
+    TimetableModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

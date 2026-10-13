@@ -5,5 +5,6 @@ import { PeriodsService } from './periods.service.js';
 @Module({
   controllers: [PeriodsController],
   providers: [PeriodsService],
+  exports: [PeriodsService],
 })
 export class PeriodsModule {}
