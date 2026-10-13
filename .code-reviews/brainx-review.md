@@ -1,12 +1,11 @@
 ---
-diff_hash: 5ecd315d2e448a02052cf629b00258776190a072e18438f55ee78c5acc499e13
-reviewed_at: 2026-10-13T08:20:00Z
-stack: nestjs
+diff_hash: 7cb7d40fab08faf602c54cd643914b9cc73158684b38897b7156a3da1fd1e073
+reviewed_at: 2026-10-13T08:16:32Z
 ---
 
 ## Summary
 
-T-017: adds nullable `User.sectionId` (FK to `Section`, `onDelete: SetNull`, indexed, with migration), an admin-only `PATCH /api/users/:id/section` endpoint (JWT + RolesGuard, DTO-validated, student-only, section existence checked, P2003/P2025 mapped to 404), and a real-Postgres integration spec. Auth, validation, delete behaviour and indexing look correct; only minor consistency/scope notes.
+T-018: adds `GET /classes/:classId/sections` (any authenticated role; writes remain admin-only via per-route RolesGuard), plus backend specs. Frontend extracts a new `ClassSectionsPanel` backed by the real sections API, loads real teachers from `/users?role=teacher`, and moves `errorMessage` to `lib/errorMessage.ts`. Stack: NestJS (backend) + React (frontend). Frontend tests (139) pass; oxlint reports no issues. No cross-repo contract mismatch: frontend consumes exactly the `[{id,name,classTeacher}]` shape the backend returns. Read access for all roles is intentional (AC-12.2).
 
 ## Findings
 
@@ -14,27 +13,29 @@ T-017: adds nullable `User.sectionId` (FK to `Section`, `onDelete: SetNull`, ind
 
 ### High (0)
 
-### Medium (0)
+### Medium (1)
+- **frontend/src/components/ClassesPage.tsx:72-83** — Failure to load `/users?role=teacher` is silently swallowed (`() => setTeachers([])`). The admin sees a dropdown with only "Unassigned" and no hint that teachers failed to load, indistinguishable from "no teacher accounts exist". *(error-handling)*
+  - status: open
+  - dev_reasoning: N/A
+  - ai_reasoning: Surface an error (e.g. pass a `teachersError` flag/message to the panel) or at least distinguish load failure from an empty list.
 
-### Low (0)
-- **backend/src/users/users.service.ts:12** — `STUDENT_SELECT` is applied to `listByRole` for every role, so teacher/admin list responses now also carry `sectionId` (always null) and the constant name is misleading. Rename (e.g. `USER_LIST_SELECT`) or keep the select separate for non-student roles. *(maintainability)*
-  - status: fixed
+### Low (2)
+- **frontend/src/components/ClassSectionsPanel.tsx:1** — New file uses double quotes and semicolons, while the rest of the frontend (e.g. `ClassesPage.tsx`, `errorMessage.ts`) uses single quotes and no semicolons. *(consistency)*
+  - status: open
   - dev_reasoning: N/A
-  - ai_reasoning: Constant is now named `USER_LIST_SELECT`, so the name no longer implies student-only use. The shared select (including `sectionId`) is intentional and selects no secrets.
-- **backend/src/users/users.service.ts:25** — Unrelated reformatting of `findByEmail`, `create` and `isTeacher` (line wrapping) is mixed into the feature diff. *(scope discipline)*
-  - status: fixed
+  - ai_reasoning: Reformat to the project's style so future diffs against neighbouring files stay clean.
+- **frontend/src/components/ClassSectionsPanel.tsx:142** — A newly created section is appended to the end of the list, but the API (and any reload) orders by name ascending, so the order changes after the next refresh (e.g. adding "A" after "B"). *(correctness)*
+  - status: open
   - dev_reasoning: N/A
-  - ai_reasoning: The staged diff for `users.service.ts` no longer touches `findByEmail`, `create` or `isTeacher`; the unrelated reformatting has been reverted.
+  - ai_reasoning: Insert in name order (or reload via `loadSections()`) after create so the UI matches server ordering.
 
 ## Reviewed files
-- backend/prisma/migrations/20261013080042_add_user_section/migration.sql
-- backend/prisma/schema.prisma
-- backend/src/auth/auth.service.spec.ts
-- backend/src/users/dto/assign-section.dto.ts
-- backend/src/users/student-section.spec.ts
-- backend/src/users/users.controller.ts
-- backend/src/users/users.service.ts
-- backend/vitest.config.ts
-- tickets/STATUS.md (skimmed)
-- tickets/T-017.md (skimmed)
-- .code-reviews/brainx-review.md (deletion of previous review file; not reviewed)
+- backend/src/classes/sections.controller.ts
+- backend/src/classes/sections.service.ts
+- backend/src/classes/sections.spec.ts
+- frontend/src/components/ClassSectionsPanel.tsx
+- frontend/src/components/ClassesPage.tsx
+- frontend/src/components/ClassesPage.test.tsx (skimmed)
+- frontend/src/lib/errorMessage.ts
+- tickets/STATUS.md, tickets/T-018.md (docs, skimmed)
+- .code-reviews/brainx-review.md (previous review file, deleted in diff; skipped)

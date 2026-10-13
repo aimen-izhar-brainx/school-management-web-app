@@ -383,6 +383,82 @@ describe('Sections API (T-015)', () => {
     }
   });
 
+  describe('T-018 list sections (GET /classes/:classId/sections)', () => {
+    const listSections = (classId: string, auth?: string) => {
+      const req = http().get(`/api/classes/${classId}/sections`);
+      return auth ? req.set('Authorization', auth) : req;
+    };
+
+    it('AC-06.1 returns [{id, name, classTeacher}] ordered by name, with null when unassigned', async () => {
+      const c = await makeClass();
+      const b = await makeSection(c.id, 'B');
+      const a = await makeSection(c.id, 'A');
+      const cc = await makeSection(c.id, 'C');
+      const res = await listSections(c.id, adminAuth()).expect(200);
+      expect(res.body).toEqual([
+        { id: a.id, name: 'A', classTeacher: null },
+        { id: b.id, name: 'B', classTeacher: null },
+        { id: cc.id, name: 'C', classTeacher: null },
+      ]);
+    });
+
+    it('AC-08.1 includes the class teacher as {id, name} once assigned', async () => {
+      const c = await makeClass();
+      const s = await makeSection(c.id, 'A');
+      const t = await makeUser('teacher');
+      await setTeacher(c.id, s.id, t.id).expect(200);
+      const res = await listSections(c.id, adminAuth()).expect(200);
+      expect(res.body).toEqual([{ id: s.id, name: 'A', classTeacher: { id: t.id, name: t.name } }]);
+    });
+
+    it('AC-06.1 returns only the sections of the requested class', async () => {
+      const c1 = await makeClass('one');
+      const c2 = await makeClass('two');
+      const mine = await makeSection(c1.id, 'Mine');
+      await makeSection(c2.id, 'Other');
+      const res = await listSections(c1.id, adminAuth()).expect(200);
+      expect(res.body.map((s: { id: string }) => s.id)).toEqual([mine.id]);
+    });
+
+    it('UC-07-E2 a class with no sections returns an empty array', async () => {
+      const c = await makeClass();
+      const res = await listSections(c.id, adminAuth()).expect(200);
+      expect(res.body).toEqual([]);
+    });
+
+    for (const role of ['admin', 'teacher', 'student'] as const) {
+      it(`AC-12.2 ${role} can read the section list`, async () => {
+        const c = await makeClass();
+        const s = await makeSection(c.id, 'A');
+        const res = await listSections(c.id, `Bearer ${tokenFor(role)}`).expect(200);
+        expect(res.body.map((x: { id: string }) => x.id)).toEqual([s.id]);
+      });
+    }
+
+    it('never exposes passwordHash or other user fields on the class teacher', async () => {
+      const c = await makeClass();
+      const s = await makeSection(c.id, 'A');
+      const t = await makeUser('teacher');
+      await setTeacher(c.id, s.id, t.id).expect(200);
+      const res = await listSections(c.id, adminAuth()).expect(200);
+      const raw = JSON.stringify(res.body);
+      expect(raw).not.toContain('passwordHash');
+      expect(raw).not.toContain('not-a-real-hash');
+      expect(Object.keys(res.body[0].classTeacher).sort()).toEqual(['id', 'name']);
+      expect(Object.keys(res.body[0]).sort()).toEqual(['classTeacher', 'id', 'name']);
+    });
+
+    it('an unknown class responds 404 "This class no longer exists."', async () => {
+      const res = await listSections('no-such-class-id', adminAuth()).expect(404);
+      expect(messageOf(res.body)).toContain('This class no longer exists.');
+    });
+
+    it('no token gives 401', async () => {
+      const c = await makeClass();
+      await listSections(c.id).expect(401);
+    });
+  });
+
   describe('UC-12-E1 authentication', () => {
     it('no token gives 401 on every section endpoint and no data changes', async () => {
       const c = await makeClass();

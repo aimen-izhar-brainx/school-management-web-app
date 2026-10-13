@@ -16,6 +16,15 @@ export class SectionsService {
     private readonly users: UsersService,
   ) {}
 
+  async list(classId: string) {
+    await this.classes.assertExists(classId);
+    return this.prisma.section.findMany({
+      where: { classId },
+      select: { id: true, name: true, classTeacher: { select: { id: true, name: true } } },
+      orderBy: { name: 'asc' },
+    });
+  }
+
   async create(classId: string, name: string) {
     await this.classes.assertExists(classId);
     await this.assertNameFree(classId, name);

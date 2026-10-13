@@ -1,26 +1,15 @@
-import { BookOpen, Pencil, Plus, Trash2, UserRound, Users, X } from 'lucide-react'
+import { BookOpen, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { AuthUser } from '../lib/auth'
+import { errorMessage } from '../lib/errorMessage'
 import { api, ApiError } from '../lib/http'
+import { ClassSectionsPanel, type TeacherOption } from './ClassSectionsPanel'
 import { DashboardShell } from './DashboardShell'
 
 interface ClassesPageProps {
   user: AuthUser
   onBack: () => void
   onSignOut: () => void
-}
-
-interface RosterStudent {
-  id: string
-  name: string
-  rollNumber: string
-}
-
-interface Section {
-  id: string
-  name: string
-  classTeacherId: string | null
-  roster: RosterStudent[]
 }
 
 interface SubjectAssignment {
@@ -32,16 +21,7 @@ interface SchoolClass {
   id: string
   name: string
   subjects: SubjectAssignment[]
-  sections: Section[]
 }
-
-const TEACHER_OPTIONS = [
-  { id: 't1', name: 'Grace Kim' },
-  { id: 't2', name: 'Daniel Ortiz' },
-  { id: 't3', name: 'Priya Nair' },
-  { id: 't4', name: 'Marcus Webb' },
-  { id: 't5', name: 'Sofia Rossi' },
-]
 
 const SUBJECT_LIBRARY = [
   'Mathematics',
@@ -54,19 +34,7 @@ const SUBJECT_LIBRARY = [
   'Music',
 ]
 
-function teacherName(id: string | null): string | null {
-  return TEACHER_OPTIONS.find((teacher) => teacher.id === id)?.name ?? null
-}
-
-let idCounter = 100
-function makeId(prefix: string): string {
-  idCounter += 1
-  return `${prefix}-${idCounter}`
-}
-
-const GENERIC_ERROR = 'Something went wrong. Please try again.'
-
-/** Shape returned by the /classes API; sections and subjects are still mocked locally (T-018/T-019). */
+/** Shape returned by the /classes API; subjects are still mocked locally (T-019). */
 interface ApiClass {
   id: string
   name: string
@@ -74,21 +42,15 @@ interface ApiClass {
 
 type LoadStatus = 'loading' | 'ready' | 'error'
 
-/** Client errors (4xx) carry a user-facing message from the API; anything else is shown generically. */
-function errorMessage(error: unknown): string {
-  return error instanceof ApiError && error.status < 500 ? error.message : GENERIC_ERROR
-}
-
 function withMockedDetails(apiClass: ApiClass, existing?: SchoolClass): SchoolClass {
-  return { subjects: [], sections: [], ...existing, ...apiClass }
+  return { subjects: [], ...existing, ...apiClass }
 }
 
-/** Admin-only screen for managing classes (persisted via the API), plus still-mocked sections, subjects and class teachers. */
+/** Admin-only screen for managing classes (persisted via the API), plus sections (persisted) and still-mocked subjects. */
 export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
   const [classes, setClasses] = useState<SchoolClass[]>([])
   const [loadStatus, setLoadStatus] = useState<LoadStatus>('loading')
   const [selectedClassId, setSelectedClassId] = useState<string | null>(null)
-  const [rosterSectionId, setRosterSectionId] = useState<string | null>(null)
 
   const [newClassName, setNewClassName] = useState('')
   const [classNameError, setClassNameError] = useState<string | null>(null)
@@ -100,12 +62,31 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
   const [isSavingRename, setIsSavingRename] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
 
-  const [newSectionName, setNewSectionName] = useState('')
-  const [sectionError, setSectionError] = useState<string | null>(null)
-
   const [newSubject, setNewSubject] = useState('')
 
   const canManageClasses = user.role === 'admin'
+
+  const [teachers, setTeachers] = useState<TeacherOption[]>([])
+  const [teachersError, setTeachersError] = useState(false)
+  useEffect(() => {
+    if (!canManageClasses) return
+    let cancelled = false
+    api.get<TeacherOption[]>('/users?role=teacher').then(
+      (rows) => {
+        if (cancelled) return
+        setTeachers(rows)
+        setTeachersError(false)
+      },
+      () => {
+        if (cancelled) return
+        setTeachers([])
+        setTeachersError(true)
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [canManageClasses])
 
   const applyLoadedClasses = useCallback((apiClasses: ApiClass[]) => {
     setClasses((prev) => apiClasses.map((apiClass) => withMockedDetails(apiClass, prev.find((c) => c.id === apiClass.id))))
@@ -148,7 +129,6 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
   }
 
   const selectedClass = classes.find((schoolClass) => schoolClass.id === selectedClassId) ?? null
-  const rosterSection = selectedClass?.sections.find((section) => section.id === rosterSectionId) ?? null
 
   const updateClass = (classId: string, updater: (schoolClass: SchoolClass) => SchoolClass) => {
     setClasses((prev) => prev.map((schoolClass) => (schoolClass.id === classId ? updater(schoolClass) : schoolClass)))
@@ -223,45 +203,6 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
     } finally {
       setIsDeleting(false)
     }
-  }
-
-  const handleAddSection = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    setSectionError(null)
-    if (!selectedClass) return
-
-    const name = newSectionName.trim()
-    if (!name) {
-      setSectionError('Please enter a section name.')
-      return
-    }
-    if (selectedClass.sections.some((section) => section.name.toLowerCase() === name.toLowerCase())) {
-      setSectionError('This section already exists.')
-      return
-    }
-
-    const created: Section = { id: makeId('section'), name, classTeacherId: null, roster: [] }
-    updateClass(selectedClass.id, (schoolClass) => ({ ...schoolClass, sections: [...schoolClass.sections, created] }))
-    setNewSectionName('')
-  }
-
-  const handleDeleteSection = (sectionId: string) => {
-    if (!selectedClass) return
-    updateClass(selectedClass.id, (schoolClass) => ({
-      ...schoolClass,
-      sections: schoolClass.sections.filter((section) => section.id !== sectionId),
-    }))
-    if (rosterSectionId === sectionId) setRosterSectionId(null)
-  }
-
-  const handleAssignTeacher = (sectionId: string, teacherId: string) => {
-    if (!selectedClass) return
-    updateClass(selectedClass.id, (schoolClass) => ({
-      ...schoolClass,
-      sections: schoolClass.sections.map((section) =>
-        section.id === sectionId ? { ...section, classTeacherId: teacherId || null } : section,
-      ),
-    }))
   }
 
   const addSubject = (subject: string) => {
@@ -453,7 +394,7 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
                           className="ml-auto rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
                         >
                           <option value="">Unassigned</option>
-                          {TEACHER_OPTIONS.map((teacher) => (
+                          {teachers.map((teacher) => (
                             <option key={teacher.id} value={teacher.id}>
                               {teacher.name}
                             </option>
@@ -507,131 +448,21 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
                   </form>
                 </section>
 
-                <section>
-                  <div className="flex items-center gap-2">
-                    <span className="flex size-8 items-center justify-center rounded-full bg-violet-50 text-violet-600">
-                      <Users className="size-4" />
-                    </span>
-                    <h3 className="text-sm font-semibold text-slate-700">Sections</h3>
-                  </div>
-
-                  <div className="mt-3 space-y-3">
-                    {selectedClass.sections.map((section) => (
-                      <div key={section.id} className="rounded-xl border border-slate-200 bg-white p-4">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-semibold text-slate-900">
-                            {selectedClass.name} &ndash; {section.name}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteSection(section.id)}
-                            className="flex items-center gap-1 text-xs font-medium text-red-600 transition-colors hover:text-red-700"
-                          >
-                            <Trash2 className="size-3.5" />
-                            Remove
-                          </button>
-                        </div>
-
-                        <div className="mt-3 flex flex-wrap items-center gap-3">
-                          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
-                            <UserRound className="size-3.5" />
-                            Class teacher
-                          </label>
-                          <select
-                            value={section.classTeacherId ?? ''}
-                            onChange={(event) => handleAssignTeacher(section.id, event.target.value)}
-                            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                          >
-                            <option value="">Unassigned</option>
-                            {TEACHER_OPTIONS.map((teacher) => (
-                              <option key={teacher.id} value={teacher.id}>
-                                {teacher.name}
-                              </option>
-                            ))}
-                          </select>
-
-                          <button
-                            type="button"
-                            onClick={() => setRosterSectionId(section.id)}
-                            className="ml-auto flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
-                          >
-                            View roster ({section.roster.length})
-                          </button>
-                        </div>
-
-                        {section.classTeacherId && (
-                          <p className="mt-2 text-xs text-slate-500">
-                            {teacherName(section.classTeacherId)} is the class teacher for this section.
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                    {selectedClass.sections.length === 0 && (
-                      <p className="text-xs text-slate-400">No sections yet.</p>
-                    )}
-                  </div>
-
-                  <form onSubmit={handleAddSection} className="mt-4 flex max-w-xs gap-2">
-                    <input
-                      value={newSectionName}
-                      onChange={(event) => setNewSectionName(event.target.value)}
-                      placeholder="e.g. C"
-                      className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-                    />
-                    <button
-                      type="submit"
-                      className="flex shrink-0 items-center justify-center rounded-lg bg-violet-600 px-3 py-2 text-white transition-colors hover:bg-violet-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
-                      aria-label="Add section"
-                    >
-                      <Plus className="size-4" />
-                    </button>
-                  </form>
-                  {sectionError && (
-                    <p role="alert" className="mt-1.5 text-xs text-red-600">
-                      {sectionError}
-                    </p>
-                  )}
-                </section>
+                <ClassSectionsPanel
+                  key={selectedClass.id}
+                  classId={selectedClass.id}
+                  className={selectedClass.name}
+                  canManage={canManageClasses}
+                  teachers={teachers}
+                  teachersError={teachersError}
+                  onClassGone={handleClassGone}
+                />
               </div>
             )}
           </div>
         </div>
       </DashboardShell>
 
-      {rosterSection && selectedClass && (
-        <div className="fixed inset-0 flex items-center justify-center bg-slate-900/40 px-4">
-          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold text-slate-900">
-                {selectedClass.name} &ndash; {rosterSection.name} roster
-              </h3>
-              <button
-                type="button"
-                onClick={() => setRosterSectionId(null)}
-                className="text-slate-400 transition-colors hover:text-slate-600"
-                aria-label="Close roster"
-              >
-                <X className="size-5" />
-              </button>
-            </div>
-
-            <ul className="mt-4 max-h-80 space-y-1.5 overflow-y-auto">
-              {rosterSection.roster.map((student) => (
-                <li
-                  key={student.id}
-                  className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                >
-                  <span className="text-slate-900">{student.name}</span>
-                  <span className="text-xs text-slate-500">Roll no. {student.rollNumber}</span>
-                </li>
-              ))}
-              {rosterSection.roster.length === 0 && (
-                <li className="text-xs text-slate-400">No students enrolled in this section yet.</li>
-              )}
-            </ul>
-          </div>
-        </div>
-      )}
     </>
   )
 }
