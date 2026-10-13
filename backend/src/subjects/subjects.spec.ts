@@ -1,19 +1,10 @@
-import { ValidationPipe, type INestApplication } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { JwtModule, JwtService } from '@nestjs/jwt';
-import { PassportModule } from '@nestjs/passport';
-import { Test } from '@nestjs/testing';
-import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { JwtStrategy } from '../auth/jwt.strategy.js';
+import { createTestApp, type DbTestApp } from '../../test/helpers/test-app.js';
 import { ClassesModule } from '../classes/classes.module.js';
-import { PrismaModule } from '../prisma/prisma.module.js';
-import { PrismaService } from '../prisma/prisma.service.js';
 import { UsersModule } from '../users/users.module.js';
 import { SubjectsModule } from './subjects.module.js';
 
 // Real Postgres, real signed JWTs, real guards. Everything carries a per-run prefix.
-const SECRET = 'test-access-secret';
 const PREFIX = `t016s-${Date.now().toString(36)}-`;
 const EMPTY = 'Please enter a subject name.';
 const DUPLICATE = 'This subject already exists.';
@@ -24,20 +15,15 @@ function messageOf(body: { message?: string | string[] }): string {
 }
 
 describe('Subjects catalog API (T-016)', () => {
-  let app: INestApplication;
-  let jwt: JwtService;
-  let prisma: PrismaService;
+  let ctx: DbTestApp;
+  let http: DbTestApp['http'];
+  let tokenFor: DbTestApp['tokenFor'];
+  let adminAuth: DbTestApp['adminAuth'];
+  let jwt: DbTestApp['jwt'];
+  let prisma: DbTestApp['prisma'];
   let seq = 0;
 
   const label = (l = 's') => `${PREFIX}${l}-${++seq}`;
-  const tokenFor = (role: string) =>
-    jwt.sign({
-      sub: 'user-does-not-exist-in-db',
-      email: 'u@example.com',
-      role,
-    });
-  const adminAuth = () => `Bearer ${tokenFor('admin')}`;
-  const http = () => request(app.getHttpServer());
 
   const createSubject = (name: string, auth = adminAuth()) =>
     http().post('/api/subjects').set('Authorization', auth).send({ name });
@@ -51,25 +37,8 @@ describe('Subjects catalog API (T-016)', () => {
     });
 
   beforeAll(async () => {
-    process.env.JWT_ACCESS_SECRET = SECRET;
-    const moduleRef = await Test.createTestingModule({
-      imports: [
-        ConfigModule.forRoot({ isGlobal: true }),
-        PassportModule,
-        JwtModule.register({ secret: SECRET }),
-        PrismaModule,
-        UsersModule,
-        ClassesModule,
-        SubjectsModule,
-      ],
-      providers: [JwtStrategy],
-    }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api');
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-    await app.init();
-    jwt = moduleRef.get(JwtService);
-    prisma = moduleRef.get(PrismaService);
+    ctx = await createTestApp({ imports: [UsersModule, ClassesModule, SubjectsModule] });
+    ({ http, tokenFor, adminAuth, jwt, prisma } = ctx);
   });
 
   afterEach(async () => {
@@ -83,7 +52,7 @@ describe('Subjects catalog API (T-016)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await ctx?.close();
   });
 
   describe('UC-09 create subject', () => {
@@ -262,16 +231,14 @@ describe('Subjects catalog API (T-016)', () => {
 describe('T-026 subject rename + delete', () => {
   const PREFIX26 = `t026s-${Date.now().toString(36)}-`;
   const GONE = 'This subject no longer exists.';
-  let app: INestApplication;
-  let jwt: JwtService;
-  let prisma: PrismaService;
+  let ctx: DbTestApp;
+  let http: DbTestApp['http'];
+  let tokenFor: DbTestApp['tokenFor'];
+  let adminAuth: DbTestApp['adminAuth'];
+  let prisma: DbTestApp['prisma'];
   let seq = 0;
 
   const label = (l = 's') => `${PREFIX26}${l}-${++seq}`;
-  const tokenFor = (role: string) =>
-    jwt.sign({ sub: 'user-does-not-exist-in-db', email: 'u@example.com', role });
-  const adminAuth = () => `Bearer ${tokenFor('admin')}`;
-  const http = () => request(app.getHttpServer());
 
   const makeSubject = async (name = label()) => {
     const res = await http()
@@ -295,25 +262,8 @@ describe('T-026 subject rename + delete', () => {
     (await prisma.subject.findUnique({ where: { id } }))?.name;
 
   beforeAll(async () => {
-    process.env.JWT_ACCESS_SECRET = SECRET;
-    const moduleRef = await Test.createTestingModule({
-      imports: [
-        ConfigModule.forRoot({ isGlobal: true }),
-        PassportModule,
-        JwtModule.register({ secret: SECRET }),
-        PrismaModule,
-        UsersModule,
-        ClassesModule,
-        SubjectsModule,
-      ],
-      providers: [JwtStrategy],
-    }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api');
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-    await app.init();
-    jwt = moduleRef.get(JwtService);
-    prisma = moduleRef.get(PrismaService);
+    ctx = await createTestApp({ imports: [UsersModule, ClassesModule, SubjectsModule] });
+    ({ http, tokenFor, adminAuth, prisma } = ctx);
   });
 
   afterEach(async () => {
@@ -326,7 +276,7 @@ describe('T-026 subject rename + delete', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await ctx?.close();
   });
 
   describe('AC-22.1 rename', () => {

@@ -1,18 +1,9 @@
-import { ValidationPipe, type INestApplication } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { JwtModule, JwtService } from '@nestjs/jwt';
-import { PassportModule } from '@nestjs/passport';
-import { Test } from '@nestjs/testing';
-import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { JwtStrategy } from '../auth/jwt.strategy.js';
+import { createTestApp, type DbTestApp } from '../../test/helpers/test-app.js';
 import { ClassesModule } from '../classes/classes.module.js';
-import { PrismaModule } from '../prisma/prisma.module.js';
-import { PrismaService } from '../prisma/prisma.service.js';
 import { UsersModule } from './users.module.js';
 
 // Real Postgres, real signed JWTs, real guards. Everything carries a per-run prefix.
-const SECRET = 'test-access-secret';
 const PREFIX = `t017-${Date.now().toString(36)}-`;
 const EMAIL_SUFFIX = `@${PREFIX}example.test`;
 const SECTION_GONE = 'This section no longer exists.';
@@ -29,16 +20,15 @@ function messageOf(body: { message?: string | string[] }): string {
 }
 
 describe('Student-section assignment (T-017)', () => {
-  let app: INestApplication;
-  let jwt: JwtService;
-  let prisma: PrismaService;
+  let ctx: DbTestApp;
+  let http: DbTestApp['http'];
+  let tokenFor: DbTestApp['tokenFor'];
+  let adminAuth: DbTestApp['adminAuth'];
+  let jwt: DbTestApp['jwt'];
+  let prisma: DbTestApp['prisma'];
   let seq = 0;
 
   const label = (l = 'x') => `${l}-${++seq}`;
-  const tokenFor = (role: string) =>
-    jwt.sign({ sub: 'user-does-not-exist-in-db', email: 'u@example.com', role });
-  const adminAuth = () => `Bearer ${tokenFor('admin')}`;
-  const http = () => request(app.getHttpServer());
 
   const makeClass = async () => {
     const res = await http()
@@ -72,24 +62,8 @@ describe('Student-section assignment (T-017)', () => {
       ?.sectionId;
 
   beforeAll(async () => {
-    process.env.JWT_ACCESS_SECRET = SECRET;
-    const moduleRef = await Test.createTestingModule({
-      imports: [
-        ConfigModule.forRoot({ isGlobal: true }),
-        PassportModule,
-        JwtModule.register({ secret: SECRET }),
-        PrismaModule,
-        UsersModule,
-        ClassesModule,
-      ],
-      providers: [JwtStrategy],
-    }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api');
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-    await app.init();
-    jwt = moduleRef.get(JwtService);
-    prisma = moduleRef.get(PrismaService);
+    ctx = await createTestApp({ imports: [UsersModule, ClassesModule] });
+    ({ http, tokenFor, adminAuth, jwt, prisma } = ctx);
   });
 
   afterEach(async () => {
@@ -100,7 +74,7 @@ describe('Student-section assignment (T-017)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await ctx?.close();
   });
 
   describe('UC-11 assign student to section', () => {

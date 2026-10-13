@@ -1,18 +1,10 @@
-import { ValidationPipe, type INestApplication } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { JwtModule, JwtService } from '@nestjs/jwt';
-import { PassportModule } from '@nestjs/passport';
-import { Test } from '@nestjs/testing';
-import request from 'supertest';
+import { JwtService } from '@nestjs/jwt';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { JwtStrategy } from '../auth/jwt.strategy.js';
-import { PrismaModule } from '../prisma/prisma.module.js';
-import { PrismaService } from '../prisma/prisma.service.js';
+import { createTestApp, type DbTestApp } from '../../test/helpers/test-app.js';
 import { ClassesModule } from './classes.module.js';
 
 // Real Postgres (DATABASE_URL from backend/.env), real signed JWTs, real guards.
 // Every class created here uses a unique per-run prefix so cleanup never touches other data.
-const SECRET = 'test-access-secret';
 const PREFIX = `t013-${Date.now().toString(36)}-`;
 const DUPLICATE = 'A class with this name already exists.';
 const EMPTY = 'Please enter a class name.';
@@ -22,16 +14,15 @@ function messageOf(body: { message?: string | string[] }): string {
 }
 
 describe('Classes API (T-013)', () => {
-  let app: INestApplication;
-  let jwt: JwtService;
-  let prisma: PrismaService;
+  let ctx: DbTestApp;
+  let http: DbTestApp['http'];
+  let tokenFor: DbTestApp['tokenFor'];
+  let adminAuth: DbTestApp['adminAuth'];
+  let jwt: DbTestApp['jwt'];
+  let prisma: DbTestApp['prisma'];
   let seq = 0;
 
   const name = (label = 'c') => `${PREFIX}${label}-${++seq}`;
-  const tokenFor = (role: string) =>
-    jwt.sign({ sub: 'user-does-not-exist-in-db', email: 'u@example.com', role });
-  const adminAuth = () => `Bearer ${tokenFor('admin')}`;
-  const http = () => request(app.getHttpServer());
 
   const createAs = (n: string) =>
     http().post('/api/classes').set('Authorization', adminAuth()).send({ name: n });
@@ -50,23 +41,8 @@ describe('Classes API (T-013)', () => {
     prisma.class.count({ where: { name: { startsWith: PREFIX, mode: 'insensitive' } } });
 
   beforeAll(async () => {
-    process.env.JWT_ACCESS_SECRET = SECRET;
-    const moduleRef = await Test.createTestingModule({
-      imports: [
-        ConfigModule.forRoot({ isGlobal: true }),
-        PassportModule,
-        JwtModule.register({ secret: SECRET }),
-        PrismaModule,
-        ClassesModule,
-      ],
-      providers: [JwtStrategy],
-    }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api');
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-    await app.init();
-    jwt = moduleRef.get(JwtService);
-    prisma = moduleRef.get(PrismaService);
+    ctx = await createTestApp({ imports: [ClassesModule] });
+    ({ http, tokenFor, adminAuth, jwt, prisma } = ctx);
   });
 
   afterEach(async () => {
@@ -76,7 +52,7 @@ describe('Classes API (T-013)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await ctx?.close();
   });
 
   describe('UC-01 create', () => {

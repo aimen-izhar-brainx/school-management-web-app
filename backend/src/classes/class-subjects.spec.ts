@@ -1,19 +1,10 @@
-import { ValidationPipe, type INestApplication } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { JwtModule, JwtService } from '@nestjs/jwt';
-import { PassportModule } from '@nestjs/passport';
-import { Test } from '@nestjs/testing';
-import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { JwtStrategy } from '../auth/jwt.strategy.js';
-import { PrismaModule } from '../prisma/prisma.module.js';
-import { PrismaService } from '../prisma/prisma.service.js';
+import { createTestApp, type DbTestApp } from '../../test/helpers/test-app.js';
 import { SubjectsModule } from '../subjects/subjects.module.js';
 import { UsersModule } from '../users/users.module.js';
 import { ClassesModule } from './classes.module.js';
 
 // Real Postgres, real signed JWTs, real guards. Everything carries a per-run prefix.
-const SECRET = 'test-access-secret';
 const PREFIX = `t016c-${Date.now().toString(36)}-`;
 const EMAIL_SUFFIX = `@${PREFIX}example.test`;
 
@@ -24,20 +15,15 @@ type ClassSubjectBody = {
 };
 
 describe('Class subjects API (T-016)', () => {
-  let app: INestApplication;
-  let jwt: JwtService;
-  let prisma: PrismaService;
+  let ctx: DbTestApp;
+  let http: DbTestApp['http'];
+  let tokenFor: DbTestApp['tokenFor'];
+  let adminAuth: DbTestApp['adminAuth'];
+  let jwt: DbTestApp['jwt'];
+  let prisma: DbTestApp['prisma'];
   let seq = 0;
 
   const label = (l = 'x') => `${PREFIX}${l}-${++seq}`;
-  const tokenFor = (role: string) =>
-    jwt.sign({
-      sub: 'user-does-not-exist-in-db',
-      email: 'u@example.com',
-      role,
-    });
-  const adminAuth = () => `Bearer ${tokenFor('admin')}`;
-  const http = () => request(app.getHttpServer());
 
   const makeClass = async () => prisma.class.create({ data: { name: label('c') } });
   const makeSubject = async () => prisma.subject.create({ data: { name: label('subj') } });
@@ -71,25 +57,8 @@ describe('Class subjects API (T-016)', () => {
   const dbRows = (classId: string) => prisma.classSubject.findMany({ where: { classId } });
 
   beforeAll(async () => {
-    process.env.JWT_ACCESS_SECRET = SECRET;
-    const moduleRef = await Test.createTestingModule({
-      imports: [
-        ConfigModule.forRoot({ isGlobal: true }),
-        PassportModule,
-        JwtModule.register({ secret: SECRET }),
-        PrismaModule,
-        UsersModule,
-        ClassesModule,
-        SubjectsModule,
-      ],
-      providers: [JwtStrategy],
-    }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api');
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-    await app.init();
-    jwt = moduleRef.get(JwtService);
-    prisma = moduleRef.get(PrismaService);
+    ctx = await createTestApp({ imports: [UsersModule, ClassesModule, SubjectsModule] });
+    ({ http, tokenFor, adminAuth, jwt, prisma } = ctx);
   });
 
   afterEach(async () => {
@@ -106,7 +75,7 @@ describe('Class subjects API (T-016)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await ctx?.close();
   });
 
   describe('UC-10 add subject to class', () => {

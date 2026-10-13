@@ -1,11 +1,11 @@
 ---
-diff_hash: 6f60d8816f040254e0c9d701e1162fc25b67ee395913d9247bf609c0917eadb2
-reviewed_at: 2026-10-13T08:41:19Z
+diff_hash: 904fc355450a863497f8ecf89b56cb829ef57c5b783949018505e06ecfa13a97
+reviewed_at: 2026-10-13T09:51:50Z
 ---
 
 ## Summary
 
-Adds `PATCH /api/subjects/:id` (admin-only rename) to the NestJS subjects module and extracts the duplicate-name lookup into `assertNameFree`, which excludes the subject's own id so a case-only rename works. Delete behaviour is unchanged; the FK on `ClassSubject.subjectId` (default RESTRICT) plus `translate()` mapping P2003/P2002/P2025 covers the delete-vs-assign and rename races. Adds a T-026 spec block covering AC-22.x, UC-22-E1/E3 and AC-12.1, and marks T-026 DONE. Backend only; no frontend contract change in this diff.
+Test-infrastructure chore: adds a shared `createTestApp` helper (`backend/test/helpers/test-app.ts`) and migrates all seven DB/HTTP-backed backend specs (classes, class-subjects, sections, subjects T-016/T-026, student-section, users controller, roles guard) to it, removing ~300 lines of duplicated Nest bootstrap. The helper mirrors main.ts (`/api` prefix, same ValidationPipe options) and listens once on an ephemeral port to avoid supertest's per-request listen/close race. This resolves the previously skipped Low finding about duplicated bootstrap in subjects.spec.ts. No production code changed; backend only, no frontend contract impact. The deleted previous review record is not reviewed.
 
 ## Findings
 
@@ -15,16 +15,23 @@ Adds `PATCH /api/subjects/:id` (admin-only rename) to the NestJS subjects module
 
 ### Medium (0)
 
-### Low (1)
-- **backend/src/subjects/subjects.spec.ts:262** — The new `describe('T-026 ...')` block repeats the whole Nest testing-module bootstrap, JWT helpers and cleanup already present in the T-016 block above it in the same file (~35 lines duplicated). Hoisting the shared setup would keep the two suites from drifting. *(maintainability)*
-  - status: skipped
-  - dev_reasoning: Deferred to the next commit. The DB-backed specs have an intermittent connection and timeout flake, and the follow-up test-infrastructure chore will move the shared Nest test bootstrap, JWT helpers and teardown into one helper used by all backend specs, which removes this duplication.
-  - ai_reasoning: Functionally correct and isolated by a separate name prefix; this is a readability/duplication issue only, with no behavioural impact.
+### Low (2)
+- **backend/test/helpers/test-app.ts:102** — When `prisma: false`, `prisma` was set to `undefined as unknown as PrismaService`, so the type claimed a PrismaService that was not there. *(maintainability)*
+  - status: fixed
+  - dev_reasoning: N/A
+  - ai_reasoning: Fixed. `createTestApp` now has overloads returning `TestApp` (no `prisma`) for `prisma: false` and `DbTestApp extends TestApp` otherwise, and the cast is gone; `roles.guard.spec.ts` uses `TestApp`, so touching `prisma` there is a compile error.
+- **backend/src/subjects/subjects.spec.ts:25** — Each migrated spec keeps thin pass-through aliases (`tokenFor = r => t.tokenFor(r)`, `adminAuth`, `http`) and copies `jwt`/`prisma` out of `t` after setup. This partly re-creates the local boilerplate the helper was meant to remove and is repeated across the seven specs. Using `t.http()`, `t.adminAuth()` and `t.prisma` directly, or destructuring once, would finish the consolidation. *(maintainability)*
+  - status: ignored
+  - dev_reasoning: Already addressed. No pass-through wrapper functions remain (grep for `=> ctx.`/`=> t.` finds none). Each block destructures once from `ctx` in beforeAll (`({ http, tokenFor, adminAuth, jwt, prisma } = ctx)`), which is the "destructuring once" option this finding proposes. Inlining `ctx.` would rewrite 144 test-body lines for no behaviour change.
+  - ai_reasoning: Behaviour is correct. The aliases keep the migration diff small, but they leave duplicated indirection across files.
 
 ## Reviewed files
 - .code-reviews/brainx-review.md (deleted; previous review record, not reviewed)
-- backend/src/subjects/subjects.controller.ts
-- backend/src/subjects/subjects.service.ts
+- backend/test/helpers/test-app.ts
+- backend/src/classes/class-subjects.spec.ts
+- backend/src/classes/classes.controller.spec.ts
+- backend/src/classes/sections.spec.ts
+- backend/src/common/guards/roles.guard.spec.ts
 - backend/src/subjects/subjects.spec.ts
-- tickets/STATUS.md
-- tickets/T-026.md
+- backend/src/users/student-section.spec.ts
+- backend/src/users/users.controller.spec.ts

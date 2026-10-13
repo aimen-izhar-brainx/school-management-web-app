@@ -1,17 +1,8 @@
-import { ValidationPipe, type INestApplication } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { JwtModule, JwtService } from '@nestjs/jwt';
-import { PassportModule } from '@nestjs/passport';
-import { Test } from '@nestjs/testing';
-import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { JwtStrategy } from '../auth/jwt.strategy.js';
-import { PrismaModule } from '../prisma/prisma.module.js';
-import { PrismaService } from '../prisma/prisma.service.js';
+import { createTestApp, type DbTestApp } from '../../test/helpers/test-app.js';
 import { UsersModule } from './users.module.js';
 
 // Real Postgres, real signed JWTs, real guards. Test users carry a per-run email suffix.
-const SECRET = 'test-access-secret';
 const PREFIX = `t015u-${Date.now().toString(36)}-`;
 const EMAIL_SUFFIX = `@${PREFIX}example.test`;
 
@@ -23,14 +14,13 @@ interface UserItem {
 }
 
 describe('GET /api/users?role= (T-015)', () => {
-  let app: INestApplication;
-  let jwt: JwtService;
-  let prisma: PrismaService;
+  let ctx: DbTestApp;
+  let http: DbTestApp['http'];
+  let tokenFor: DbTestApp['tokenFor'];
+  let jwt: DbTestApp['jwt'];
+  let prisma: DbTestApp['prisma'];
   let seq = 0;
 
-  const tokenFor = (role: string) =>
-    jwt.sign({ sub: 'user-does-not-exist-in-db', email: 'u@example.com', role });
-  const http = () => request(app.getHttpServer());
   const makeUser = (role: 'teacher' | 'student' | 'admin' | 'parent') =>
     prisma.user.create({
       data: {
@@ -43,23 +33,8 @@ describe('GET /api/users?role= (T-015)', () => {
   const mine = (items: UserItem[]) => items.filter((u) => u.email.endsWith(EMAIL_SUFFIX));
 
   beforeAll(async () => {
-    process.env.JWT_ACCESS_SECRET = SECRET;
-    const moduleRef = await Test.createTestingModule({
-      imports: [
-        ConfigModule.forRoot({ isGlobal: true }),
-        PassportModule,
-        JwtModule.register({ secret: SECRET }),
-        PrismaModule,
-        UsersModule,
-      ],
-      providers: [JwtStrategy],
-    }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api');
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-    await app.init();
-    jwt = moduleRef.get(JwtService);
-    prisma = moduleRef.get(PrismaService);
+    ctx = await createTestApp({ imports: [UsersModule] });
+    ({ http, tokenFor, jwt, prisma } = ctx);
   });
 
   afterEach(async () => {
@@ -67,7 +42,7 @@ describe('GET /api/users?role= (T-015)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await ctx?.close();
   });
 
   it('AC-08.2 role=teacher returns only users with role teacher', async () => {
