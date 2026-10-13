@@ -101,7 +101,14 @@ export function MyTimetablePage({ user, onBack, onSignOut }: MyTimetablePageProp
           <tbody>
             {DEFAULT_PERIODS.map((period) => {
               if (period.isBreak) {
-                return <TimetableBreakRow key={period.id} period={period} />
+                return (
+                  <TimetableBreakRow
+                    key={period.id}
+                    label={period.breakLabel ?? 'Break'}
+                    startTime={period.startTime}
+                    endTime={period.endTime}
+                  />
+                )
               }
 
               const periodRow = grid[period.id] ?? {}

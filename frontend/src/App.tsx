@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AdminCreatePage, type PersonTab } from './components/AdminCreatePage'
+import { AdminCreatePage } from './components/AdminCreatePage'
 import { AdminDashboardPage } from './components/AdminDashboardPage'
 import { AttendancePage } from './components/AttendancePage'
 import { ClassesPage } from './components/ClassesPage'
@@ -14,21 +14,7 @@ import { ResetPasswordPage } from './components/ResetPasswordPage'
 import { RoleHome } from './components/RoleHome'
 import { TimetablePage } from './components/TimetablePage'
 import { logout, restoreSession, type AuthSession } from './lib/auth'
-
-type View =
-  | { name: 'login' }
-  | { name: 'forgot' }
-  | { name: 'reset'; token: string }
-  | { name: 'home' }
-  | { name: 'profile' }
-  | { name: 'admin-create'; tab: PersonTab }
-  | { name: 'admin-classes' }
-  | { name: 'admin-timetable' }
-  | { name: 'admin-attendance' }
-  | { name: 'my-timetable' }
-  | { name: 'mark-attendance' }
-  | { name: 'my-attendance' }
-  | { name: 'notices' }
+import { isAdminOnlyView, type View } from './lib/navigation'
 
 /**
  * The emailed link points at /?token=…, so the token in the URL decides the
@@ -38,6 +24,8 @@ function initialView(): View {
   const token = new URLSearchParams(window.location.search).get('token')
   return token ? { name: 'reset', token } : { name: 'login' }
 }
+
+const HOME: View = { name: 'home' }
 
 function App() {
   const [session, setSession] = useState<AuthSession | null>(null)
@@ -56,12 +44,16 @@ function App() {
     hasRestoredRef.current = true
 
     restoreSession()
-      .then(setSession)
+      .then((restored) => {
+        if (restored) setView(HOME)
+        setSession(restored)
+      })
       .finally(() => setIsRestoring(false))
   }, [])
 
   const handleSignOut = async () => {
     setSession(null)
+    setView(HOME)
     await logout()
   }
 
@@ -78,6 +70,13 @@ function App() {
   }
 
   if (session) {
+    const isAdmin = session.user.role === 'admin'
+    if (!isAdmin && isAdminOnlyView(view)) {
+      return (
+        <MyTimetablePage user={session.user} onBack={() => goTo(HOME)} onSignOut={handleSignOut} />
+      )
+    }
+
     if (view.name === 'profile') {
       return (
         <ProfilePage
@@ -187,7 +186,12 @@ function App() {
   }
 
   return (
-    <LoginPage onSignedIn={setSession} onForgotPassword={() => goTo({ name: 'forgot' })} />
+    <LoginPage
+      onSignedIn={(next) => {
+        setView(HOME)
+        setSession(next)
+      }}
+      onForgotPassword={() => goTo({ name: 'forgot' })} />
   )
 }
 

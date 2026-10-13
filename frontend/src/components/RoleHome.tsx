@@ -44,7 +44,7 @@ export function RoleHome({
 
       {role.id === 'teacher' || role.id === 'student' ? (
         <div className="mt-8">
-          <h2 className="text-sm font-semibold text-slate-700">Timetable</h2>
+          <h2 className="text-sm font-semibold text-slate-700">My timetable</h2>
           <div className="mt-3 grid gap-3 sm:grid-cols-3">
             <button
               type="button"

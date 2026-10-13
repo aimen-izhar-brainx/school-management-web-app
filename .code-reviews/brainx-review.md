@@ -1,11 +1,11 @@
 ---
-diff_hash: 7ef824172660cfd4d834c109df1ecff1062f859016e0b805f6af7f7e77034e15
-reviewed_at: 2026-10-13T11:00:37Z
+diff_hash: 58d787593d319f8516c1eaf2648f994869386018cabc7d0a13e39ee866cfcb5c
+reviewed_at: 2026-10-13T11:18:38Z
 ---
 
 ## Summary
 
-T-030 hardens `PUT /sections/:sectionId/timetable/:periodId/:dayOfWeek`: `place` now rejects unknown periods (404), break periods (400) and unknown subjects (404) before the transactional write, and `PlaceEntryDto` is reduced to a single `@Matches(/\S/)` validator so a missing/blank/non-string `subjectId` yields one message naming the field. A new real-DB spec covers AC-24.1–24.5, UC-24-E1 and UC-24-E2 (including check order and client-supplied `teacherId` being ignored). Ticket and status files are updated, and the previous review file is removed. Stack: NestJS + Prisma. The logic is correct: the check order is section, period, subject, then class membership/teacher inside the lock; `teacherId` is not on the DTO so it cannot be client-controlled (the global whitelist/ignore behaviour is exercised by the test); the non-string case fails `@Matches`. No correctness or security issues found. Only minor hygiene items.
+T-023 frontend: TimetablePage is rewired to the real API (classes, sections, periods, per-section timetable, PUT/DELETE of cells), with the grid extracted into a new TimetableGrid component. Shared types (`ClassSubject`, `DayId`, `TimetablePeriod`, `TimetableEntry`) move to `lib/types.ts`, `api.put` and a `cellKey` helper are added, the hardcoded SUBJECTS constant is removed, and TimetableBreakRow takes primitive props. Tests are added or expanded, and a release report is added. Stack: React 19 + Vite + TypeScript. `tsc -b` and oxlint are clean and the 25 timetable/App tests pass. Role gating is client-side only (`user.role === 'admin'`), and the backend is expected to enforce it (T-031 tracks this). Only minor issues were found.
 
 ## Findings
 
@@ -13,23 +13,34 @@ T-030 hardens `PUT /sections/:sectionId/timetable/:periodId/:dayOfWeek`: `place`
 
 ### High (0)
 
-### Medium (0)
+### Medium (1)
+- **frontend/src/components/TimetablePage.tsx:122** — The in-flight guard and `busyKeys` are keyed by `periodId:day` only, not by section. If the admin switches sections while a save is pending, the same cell in the newly selected section shows as busy, and a click on it is silently ignored by the `inFlight` check. The old save's result is also discarded without feedback, since `request !== latestLoad.current`. *(correctness)*
+  - status: open
+  - dev_reasoning: N/A
+  - ai_reasoning: Include the section id in the key (e.g. `${section.id}:${cellKey}`), or clear `busyKeys` and `inFlight` in `selectSection`. A pending save for the previous section still completes server-side, which is acceptable.
 
 ### Low (2)
-- **backend/tsconfig.build.tsbuildinfo:1** — A generated TypeScript incremental-build artifact is tracked in git and modified by this commit, adding noise and merge-conflict potential unrelated to T-030. *(maintainability)*
-  - status: ignored
-  - dev_reasoning: Unrelated to T-030. The pre-commit hook's own `git add -A` stages this file. Untracking it and adding `*.tsbuildinfo` to .gitignore is a repo-hygiene change outside ticket scope, deferred for the repo owner's decision (same as earlier commits).
-  - ai_reasoning: Add `*.tsbuildinfo` to `.gitignore` and `git rm --cached` the file, or unstage this change (`git restore --staged backend/tsconfig.build.tsbuildinfo`) so the ticket diff stays focused.
-- **backend/src/timetable/dto/place-entry.dto.ts:7** — The error message changed to `'subjectId is required.'`, while the sibling `ClassSubjectDto` (`classes/dto/class-subject.dto.ts`) still uses the user-facing `'Please choose a subject.'` for the same field. The two subject-picker endpoints now report the same condition differently. *(consistency)*
-  - status: ignored
-  - dev_reasoning: Intentional. UC-24-E1 requires the API error for a missing field to name the field. ClassSubjectDto's message is shown in the class-subject picker UI and isn't covered by UC-24.
-  - ai_reasoning: This is intentional for UC-24-E1 (the message must name the field), so it is low risk. Consider aligning wording across both DTOs or noting the divergence in a comment.
+- **frontend/src/components/MyTimetablePage.tsx:104** — The `TimetableBreakRow` JSX is written as `return <TimetableBreakRow` with props indented unlike the multi-line `return (...)` form used in the new TimetableGrid, and the closing tag is misindented. *(consistency)*
+  - status: open
+  - dev_reasoning: N/A
+  - ai_reasoning: Wrap in `return (...)` and indent like TimetableGrid.tsx so the two call sites match.
+- **frontend/src/components/TimetablePage.tsx:75** — The directory load fires one `/classes/:id/sections` request per class (N+1) after fetching the class list. *(maintainability)*
+  - status: skipped
+  - dev_reasoning: Deferred. A single school has a few dozen classes at most, the requests run in parallel, and this matches the existing per-class sections endpoint added in T-018. Add a combined sections-with-class endpoint if class counts grow.
+  - ai_reasoning: Fine at school scale and consistent with the existing per-class fetch pattern. Consider a single endpoint returning sections with class names if class counts grow.
 
 ## Reviewed files
-- .code-reviews/brainx-review.md (deleted; previous review, replaced by this one)
-- backend/src/timetable/dto/place-entry.dto.ts
-- backend/src/timetable/timetable-validation.spec.ts
-- backend/src/timetable/timetable.service.ts
-- backend/tsconfig.build.tsbuildinfo (generated; skimmed)
+- docs/release-report.md
+- frontend/src/App.timetableAccess.test.tsx
+- frontend/src/components/ClassSubjectsPanel.tsx
+- frontend/src/components/MyTimetablePage.tsx
+- frontend/src/components/TimetableBreakRow.tsx
+- frontend/src/components/TimetableGrid.tsx
+- frontend/src/components/TimetablePage.test.tsx (skimmed; tests pass)
+- frontend/src/components/TimetablePage.tsx
+- frontend/src/data/timetable.ts
+- frontend/src/lib/http.ts
+- frontend/src/lib/timetable.ts
+- frontend/src/lib/types.ts
 - tickets/STATUS.md
-- tickets/T-030.md
+- .code-reviews/brainx-review.md (deleted; previous review, replaced by this one)

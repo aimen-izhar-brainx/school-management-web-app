@@ -1,4 +1,6 @@
-export type DayId = 'mon' | 'tue' | 'wed' | 'thu' | 'fri'
+import type { DayId } from '../lib/types'
+
+export type { DayId }
 
 export interface DayInfo {
   id: DayId
@@ -50,17 +52,6 @@ export const TEACHERS: Teacher[] = [
 export function teacherName(id: string | null): string | null {
   return TEACHERS.find((teacher) => teacher.id === id)?.name ?? null
 }
-
-export const SUBJECTS = [
-  'Mathematics',
-  'English',
-  'Science',
-  'Social Studies',
-  'Art',
-  'Physical Education',
-  'Computer Science',
-  'Music',
-]
 
 export interface SectionOption {
   id: string

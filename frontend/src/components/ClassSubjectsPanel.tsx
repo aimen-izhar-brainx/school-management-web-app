@@ -3,14 +3,8 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { compareByName } from '../lib/compareByName'
 import { errorMessage, isNotFound } from '../lib/errorMessage'
 import { api } from '../lib/http'
-import type { Subject, TeacherOption } from '../lib/types'
+import type { ClassSubject as ClassSubjectRow, Subject, TeacherOption } from '../lib/types'
 import { SubjectCatalogManager } from './SubjectCatalogManager'
-
-interface ClassSubjectRow {
-  id: string
-  subject: Subject
-  teacher: TeacherOption | null
-}
 
 interface ClassSubjectsPanelProps {
   classId: string
