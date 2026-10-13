@@ -227,6 +227,7 @@ export function TimetablePage({ user, onBack, onSignOut }: TimetablePageProps) {
                 <TimetableGrid
                   periods={periods}
                   entries={entries}
+                  caption={(entry) => entry.teacher.name}
                   subjects={subjects}
                   editable={editable}
                   busyKeys={busyKeys

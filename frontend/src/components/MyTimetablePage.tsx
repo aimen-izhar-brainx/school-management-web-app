@@ -1,17 +1,11 @@
-import {
-  DAYS,
-  DEFAULT_PERIODS,
-  formatTime,
-  INITIAL_TIMETABLES,
-  SECTION_OPTIONS,
-  TEACHERS,
-  sectionLabel,
-  teacherName,
-  type DayId,
-} from '../data/timetable'
+import { useEffect, useState } from 'react'
 import type { AuthUser } from '../lib/auth'
+import { GENERIC_ERROR } from '../lib/errorMessage'
+import { api } from '../lib/http'
+import { cellKey } from '../lib/timetable'
+import type { DayId, MyTimetable } from '../lib/types'
 import { DashboardShell } from './DashboardShell'
-import { TimetableBreakRow } from './TimetableBreakRow'
+import { TimetableGrid } from './TimetableGrid'
 
 interface MyTimetablePageProps {
   user: AuthUser
@@ -19,130 +13,77 @@ interface MyTimetablePageProps {
   onSignOut: () => void
 }
 
-interface ScheduleCell {
-  subject: string
-  caption: string
+type LoadState = { status: 'loading' } | { status: 'error' } | { status: 'ready'; timetable: MyTimetable }
+
+function toEntryMap<E extends { periodId: string; dayOfWeek: DayId }>(entries: E[]) {
+  return Object.fromEntries(entries.map((entry) => [cellKey(entry.periodId, entry.dayOfWeek), entry]))
 }
 
-/**
- * Builds a per-period, per-day lookup for the current viewer.
- * Students see their home section's timetable; teachers see every slot they
- * are assigned across all sections, pulled from the same seed data the admin
- * builder edits (there is no account-to-teacher link yet, so the mock
- * teacher is matched by name, falling back to the first one).
- */
-function useSchedule(user: AuthUser): { grid: Partial<Record<string, Partial<Record<DayId, ScheduleCell>>>>; caption: string } {
-  if (user.role === 'student') {
-    const section = SECTION_OPTIONS[0]
-    if (!section) return { grid: {}, caption: '' }
-
-    const sectionGrid = INITIAL_TIMETABLES[section.id] ?? {}
-    const grid: Partial<Record<string, Partial<Record<DayId, ScheduleCell>>>> = {}
-
-    for (const [periodId, dayEntries] of Object.entries(sectionGrid)) {
-      const row: Partial<Record<DayId, ScheduleCell>> = {}
-      for (const day of DAYS) {
-        const entry = dayEntries?.[day.id]
-        if (entry) row[day.id] = { subject: entry.subject, caption: teacherName(entry.teacherId) ?? 'Unassigned' }
-      }
-      grid[periodId] = row
-    }
-
-    return { grid, caption: sectionLabel(section) }
-  }
-
-  const matchedTeacher =
-    TEACHERS.find((teacher) => teacher.name.toLowerCase() === user.name.toLowerCase()) ?? TEACHERS[0]
-  const grid: Partial<Record<string, Partial<Record<DayId, ScheduleCell>>>> = {}
-
-  for (const section of SECTION_OPTIONS) {
-    const sectionGrid = INITIAL_TIMETABLES[section.id] ?? {}
-    for (const [periodId, dayEntries] of Object.entries(sectionGrid)) {
-      for (const day of DAYS) {
-        const entry = dayEntries?.[day.id]
-        if (entry && entry.teacherId === matchedTeacher.id) {
-          grid[periodId] = { ...grid[periodId], [day.id]: { subject: entry.subject, caption: sectionLabel(section) } }
-        }
-      }
-    }
-  }
-
-  return { grid, caption: matchedTeacher.name }
+function Message({ children }: { children: string }) {
+  return <p className="mt-6 text-sm text-slate-500">{children}</p>
 }
 
-/** Read-only weekly timetable for teachers and students. */
-export function MyTimetablePage({ user, onBack, onSignOut }: MyTimetablePageProps) {
-  const { grid, caption } = useSchedule(user)
-  const isTeacher = user.role === 'teacher'
+function Timetable({ timetable }: { timetable: MyTimetable }) {
+  if (timetable.kind === 'teacher') {
+    return (
+      <>
+        {timetable.entries.length === 0 && <Message>No classes scheduled yet.</Message>}
+        <TimetableGrid
+          periods={timetable.periods}
+          entries={toEntryMap(timetable.entries)}
+          label={(entry) => `${entry.subject.name} — ${entry.class.name}-${entry.section.name}`}
+          editable={false}
+        />
+      </>
+    )
+  }
+
+  if (!timetable.section) {
+    return <Message>You haven't been assigned to a class section yet. Contact your school admin.</Message>
+  }
+
+  return (
+    <>
+      {timetable.entries.length === 0 && <Message>Your class's timetable hasn't been set up yet.</Message>}
+      <TimetableGrid
+        periods={timetable.periods}
+        entries={toEntryMap(timetable.entries)}
+        caption={(entry) => entry.teacher.name}
+        editable={false}
+      />
+    </>
+  )
+}
+
+/** Read-only weekly timetable for teachers (all their sections) and students (their section). */
+export function MyTimetablePage({ onBack, onSignOut }: MyTimetablePageProps) {
+  const [state, setState] = useState<LoadState>({ status: 'loading' })
+
+  useEffect(() => {
+    let isStale = false
+    api
+      .get<MyTimetable>('/timetable/me')
+      .then((timetable) => {
+        if (!isStale) setState({ status: 'ready', timetable })
+      })
+      .catch(() => {
+        if (!isStale) setState({ status: 'error' })
+      })
+    return () => {
+      isStale = true
+    }
+  }, [])
 
   return (
     <DashboardShell onBack={onBack} onSignOut={onSignOut} mainClassName="mx-auto max-w-6xl px-6 py-12">
       <h1 className="mt-4 text-2xl font-bold text-slate-900">My timetable</h1>
-      <p className="mt-1 text-sm text-slate-500">
-        {isTeacher
-          ? `Your weekly teaching schedule across classes, shown for ${caption}.`
-          : `Weekly class schedule for ${caption}.`}
-      </p>
-
-      <div className="mt-8 overflow-x-auto rounded-xl border border-slate-200 bg-white">
-        <table className="w-full min-w-[720px] table-fixed border-collapse text-left">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50">
-              <th className="w-28 px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Time
-              </th>
-              {DAYS.map((day) => (
-                <th key={day.id} className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {day.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {DEFAULT_PERIODS.map((period) => {
-              if (period.isBreak) {
-                return (
-                  <TimetableBreakRow
-                    key={period.id}
-                    label={period.breakLabel ?? 'Break'}
-                    startTime={period.startTime}
-                    endTime={period.endTime}
-                  />
-                )
-              }
-
-              const periodRow = grid[period.id] ?? {}
-
-              return (
-                <tr key={period.id} className="border-b border-slate-100 last:border-b-0">
-                  <td className="px-3 py-2.5 text-xs font-medium text-slate-500">
-                    {formatTime(period.startTime)}
-                    <br />
-                    {formatTime(period.endTime)}
-                  </td>
-                  {DAYS.map((day) => {
-                    const cell = periodRow[day.id]
-                    return (
-                      <td key={day.id} className="px-2 py-2">
-                        {cell ? (
-                          <div className="rounded-lg border border-violet-100 bg-violet-50 px-2.5 py-2">
-                            <p className="text-xs font-semibold text-violet-900">{cell.subject}</p>
-                            <p className="text-[11px] text-violet-500">{cell.caption}</p>
-                          </div>
-                        ) : (
-                          <div className="rounded-lg border border-dashed border-slate-200 px-2.5 py-2 text-center text-[11px] text-slate-300">
-                            Free
-                          </div>
-                        )}
-                      </td>
-                    )
-                  })}
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
+      {state.status === 'loading' && <Message>Loading your timetable...</Message>}
+      {state.status === 'error' && (
+        <p role="alert" className="mt-6 text-sm text-red-600">
+          {GENERIC_ERROR}
+        </p>
+      )}
+      {state.status === 'ready' && <Timetable timetable={state.timetable} />}
     </DashboardShell>
   )
 }

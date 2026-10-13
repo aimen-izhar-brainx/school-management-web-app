@@ -1,34 +1,38 @@
 import { X } from 'lucide-react'
 import { DAYS, formatTime } from '../data/timetable'
 import { cellKey } from '../lib/timetable'
-import type { ClassSubject, DayId, TimetableEntry, TimetablePeriod } from '../lib/types'
+import type { ClassSubject, DayId, Subject, TimetablePeriod } from '../lib/types'
 import { TimetableBreakRow } from './TimetableBreakRow'
 
-interface TimetableGridProps {
+interface SharedProps<E extends { subject: Subject }> {
   periods: TimetablePeriod[]
   /** Entries of the shown section, keyed by `cellKey`. */
-  entries: Record<string, TimetableEntry>
-  /** The class's subjects: the options of each cell's selector. Unused when read-only. */
+  entries: Record<string, E>
+  /** Text under each cell's subject (e.g. its teacher). */
+  caption?: (entry: E) => string
+  /** Read-only text of a cell's subject line; defaults to the subject name. */
+  label?: (entry: E) => string
+  cellErrors?: Record<string, string>
+}
+
+interface EditableProps {
+  editable: true
+  /** The class's subjects: the options of each cell's selector. */
   subjects: ClassSubject[]
-  /** Without this the grid is read-only: no selectors, no Clear buttons. */
-  editable: boolean
   busyKeys: string[]
-  cellErrors: Record<string, string>
   onAssign: (periodId: string, day: DayId, subjectId: string) => void
   onClear: (periodId: string, day: DayId) => void
 }
 
+interface ReadOnlyProps {
+  editable: false
+}
+
+type TimetableGridProps<E extends { subject: Subject }> = SharedProps<E> & (EditableProps | ReadOnlyProps)
+
 /** Weekly grid (periods by weekday) of one section's timetable. */
-export function TimetableGrid({
-  periods,
-  entries,
-  subjects,
-  editable,
-  busyKeys,
-  cellErrors,
-  onAssign,
-  onClear,
-}: TimetableGridProps) {
+export function TimetableGrid<E extends { subject: Subject }>(props: TimetableGridProps<E>) {
+  const { periods, entries, caption, label = (entry) => entry.subject.name, cellErrors = {} } = props
   return (
     <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 bg-white">
       <table className="w-full min-w-[720px] table-fixed border-collapse text-left">
@@ -67,19 +71,19 @@ export function TimetableGrid({
                   const key = cellKey(period.id, day.id)
                   const entry = entries[key]
                   const name = `${period.label} ${day.label}`
-                  const isBusy = busyKeys.includes(key)
+                  const isBusy = props.editable && props.busyKeys.includes(key)
                   const error = cellErrors[key]
                   const errorId = `cell-error-${key}`
 
                   return (
                     <td key={day.id} className="px-2 py-2 align-top">
                       <div className="relative space-y-1.5 rounded-lg border border-slate-200 bg-white p-2">
-                        {editable ? (
+                        {props.editable ? (
                           <>
                             {entry && (
                               <button
                                 type="button"
-                                onClick={() => onClear(period.id, day.id)}
+                                onClick={() => props.onClear(period.id, day.id)}
                                 disabled={isBusy}
                                 className="absolute right-1 top-1 text-slate-300 transition-colors hover:text-red-600 disabled:cursor-not-allowed"
                                 aria-label={`Clear ${name}`}
@@ -92,14 +96,14 @@ export function TimetableGrid({
                               aria-describedby={error ? errorId : undefined}
                               value={entry?.subject.id ?? ''}
                               disabled={isBusy}
-                              onChange={(event) => onAssign(period.id, day.id, event.target.value)}
+                              onChange={(event) => props.onAssign(period.id, day.id, event.target.value)}
                               className="block w-full rounded-md border border-slate-200 bg-white px-1.5 py-1 pr-5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 disabled:cursor-not-allowed disabled:bg-slate-50"
                             >
                               <option value="">Add subject</option>
-                              {entry && !subjects.some((row) => row.subject.id === entry.subject.id) && (
+                              {entry && !props.subjects.some((row) => row.subject.id === entry.subject.id) && (
                                 <option value={entry.subject.id}>{entry.subject.name}</option>
                               )}
-                              {subjects.map((row) => (
+                              {props.subjects.map((row) => (
                                 <option key={row.id} value={row.subject.id} disabled={!row.teacher}>
                                   {row.teacher ? row.subject.name : `${row.subject.name} (no teacher)`}
                                 </option>
@@ -107,9 +111,9 @@ export function TimetableGrid({
                             </select>
                           </>
                         ) : (
-                          entry && <p className="text-xs font-medium text-slate-900">{entry.subject.name}</p>
+                          entry && <p className="text-xs font-medium text-slate-900">{label(entry)}</p>
                         )}
-                        {entry && <p className="text-xs text-slate-500">{entry.teacher.name}</p>}
+                        {entry && caption && <p className="text-xs text-slate-500">{caption(entry)}</p>}
                         {error && (
                           <p id={errorId} role="alert" className="text-xs text-red-600">
                             {error}

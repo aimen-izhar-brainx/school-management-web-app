@@ -1,11 +1,11 @@
 ---
-diff_hash: 974b9188768d78c0a7fe84e64706ece0204d18b70f17d9b75259400d25dab445
-reviewed_at: 2026-10-13T12:23:39Z
+diff_hash: 9a97404d17f4ddd336e41fd51237047fd6dc0d1bf5db20040ef28f62143079d1
+reviewed_at: 2026-10-13T12:36:31Z
 ---
 
 ## Summary
 
-T-024 backend: adds `GET /api/timetable/me` (JwtAuthGuard, any role). Teachers get all their own slots across sections (subject, section, class); students get their section's full grid via a new `TimetableService.gridFor`, or `section: null` when unassigned; admin/parent get `kind: 'none'` (deferred to T-031). Shared Prisma selects are extracted to `entry-select.ts`. Queries are scoped by the JWT `sub`, so there is no IDOR path. Stack: NestJS + Prisma. Tests and ticket status are updated. No correctness or security problems found; only minor items.
+T-025: MyTimetablePage now loads `GET /timetable/me` instead of mock data and renders teacher/student timetables read-only via a generalised `TimetableGrid`. Mock seed data (`INITIAL_TIMETABLES`, `DEFAULT_PERIODS`, `teacherName`) is removed; tests rewritten; ticket/status docs updated. Stack: React (frontend only; no backend changes, so no cross-repo contract change — the `MyTimetable` type matches T-024). The teacher collision case in `toEntryMap` is safe: the DB has `@@unique([teacherId, periodId, dayOfWeek])`.
 
 ## Findings
 
@@ -16,23 +16,24 @@ T-024 backend: adds `GET /api/timetable/me` (JwtAuthGuard, any role). Teachers g
 ### Medium (0)
 
 ### Low (2)
-- **backend/tsconfig.build.tsbuildinfo:1** — A generated incremental-build cache is tracked and modified in this commit, adding noise and merge conflicts unrelated to T-024. *(maintainability)*
-  - status: ignored
-  - dev_reasoning: Pre-existing tracked file that the hook's `git add -A` stages on every commit. Untracking it is a repo-hygiene decision deferred to the repo owner (same as earlier commits).
-  - ai_reasoning: The file is already tracked, so this is pre-existing, but it should be gitignored and untracked, or left out of feature commits.
-- **backend/src/timetable/timetable-me.controller.ts:13** — The handler reads `req.user.sub`/`role` through `@Req()` and the service branches on `role` inline. There is no `@CurrentUser()` decorator in `src/common/decorators`, so this is only a convention note. *(consistency)*
-  - status: ignored
-  - dev_reasoning: Follows the existing project convention. `auth.controller.ts` reads the caller via `@Req()` the same way, and this is the only other endpoint that needs the caller. Introducing a `@CurrentUser()` decorator is a cross-cutting refactor outside T-024's scope.
-  - ai_reasoning: Acceptable for now. A `@CurrentUser()` decorator would remove the `Request & { user }` typing repeated across controllers once more endpoints need the caller.
+- **frontend/src/components/TimetableGrid.tsx:12-25** — `editable` is a required boolean but `onAssign`, `onClear`, `subjects`, `busyKeys` and `cellErrors` all became optional and are called with `?.`. `editable={true}` without handlers now compiles and silently does nothing. A discriminated union (editable props vs read-only props) would keep the admin builder type-safe. *(maintainability)*
+  - status: open
+  - dev_reasoning: N/A
+  - ai_reasoning: Type-weakening of the shared grid's contract; no functional bug today since TimetablePage passes all handlers.
+- **frontend/src/components/MyTimetablePage.tsx:19** — `toEntryMap` types the day with `Parameters<typeof cellKey>[1]` instead of importing `DayId` from `../lib/types`, which is harder to read. *(maintainability)*
+  - status: open
+  - dev_reasoning: N/A
+  - ai_reasoning: Readability only; `DayId` is already exported and used by sibling components.
 
 ## Reviewed files
-- .code-reviews/brainx-review.md (deleted, previous review)
-- backend/src/timetable/entry-select.ts
-- backend/src/timetable/timetable-me.controller.ts
-- backend/src/timetable/timetable-me.service.ts
-- backend/src/timetable/timetable-me.spec.ts
-- backend/src/timetable/timetable.module.ts
-- backend/src/timetable/timetable.service.ts
-- backend/tsconfig.build.tsbuildinfo (skipped, generated)
-- tickets/STATUS.md
-- tickets/T-024.md
+- .code-reviews/brainx-review.md (deleted; prior review record)
+- frontend/src/components/MyTimetablePage.emptySections.test.tsx (deleted)
+- frontend/src/components/MyTimetablePage.formatTimeEdgeCases.test.tsx
+- frontend/src/components/MyTimetablePage.test.tsx
+- frontend/src/components/MyTimetablePage.tsx
+- frontend/src/components/TimetableGrid.tsx
+- frontend/src/components/TimetablePage.tsx
+- frontend/src/data/timetable.ts
+- frontend/src/lib/types.ts
+- tickets/STATUS.md (skimmed)
+- tickets/T-025.md (skimmed)
