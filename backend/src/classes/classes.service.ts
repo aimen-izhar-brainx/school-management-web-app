@@ -46,7 +46,7 @@ export class ClassesService {
     }
   }
 
-  private async assertExists(id: string) {
+  async assertExists(id: string) {
     const found = await this.prisma.class.findUnique({ where: { id }, select: { id: true } });
     if (!found) throw new NotFoundException(NOT_FOUND);
   }

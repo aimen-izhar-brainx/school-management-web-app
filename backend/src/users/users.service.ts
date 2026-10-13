@@ -26,4 +26,9 @@ export class UsersService {
       orderBy: { name: 'asc' },
     });
   }
+
+  async isTeacher(id: string): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({ where: { id }, select: { role: true } });
+    return user?.role === 'teacher';
+  }
 }

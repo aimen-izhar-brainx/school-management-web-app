@@ -1,18 +1,23 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { UsersService } from '../users/users.service.js';
+import { ClassesService } from './classes.service.js';
 
 const DUPLICATE = 'This section already exists.';
-const CLASS_NOT_FOUND = 'This class no longer exists.';
 const SECTION_NOT_FOUND = 'This section no longer exists.';
 const NOT_A_TEACHER = 'Please choose a valid teacher.';
 const SELECT = { id: true, name: true, classId: true, classTeacherId: true } as const;
 
 @Injectable()
 export class SectionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly classes: ClassesService,
+    private readonly users: UsersService,
+  ) {}
 
   async create(classId: string, name: string) {
-    await this.assertClassExists(classId);
+    await this.classes.assertExists(classId);
     await this.assertNameFree(classId, name);
     try {
       return await this.prisma.section.create({ data: { classId, name }, select: SELECT });
@@ -38,7 +43,9 @@ export class SectionsService {
 
   async setClassTeacher(classId: string, id: string, teacherId: string | null) {
     await this.assertSectionInClass(classId, id);
-    if (teacherId !== null) await this.assertIsTeacher(teacherId);
+    if (teacherId !== null && !(await this.users.isTeacher(teacherId))) {
+      throw new BadRequestException(NOT_A_TEACHER);
+    }
     return this.update(id, { classTeacherId: teacherId });
   }
 
@@ -50,16 +57,8 @@ export class SectionsService {
     }
   }
 
-  private async assertClassExists(classId: string) {
-    const found = await this.prisma.class.findUnique({
-      where: { id: classId },
-      select: { id: true },
-    });
-    if (!found) throw new NotFoundException(CLASS_NOT_FOUND);
-  }
-
   private async assertSectionInClass(classId: string, id: string) {
-    await this.assertClassExists(classId);
+    await this.classes.assertExists(classId);
     const found = await this.prisma.section.findFirst({
       where: { id, classId },
       select: { id: true },
@@ -77,14 +76,6 @@ export class SectionsService {
       select: { id: true },
     });
     if (clash) throw new BadRequestException(DUPLICATE);
-  }
-
-  private async assertIsTeacher(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { role: true },
-    });
-    if (user?.role !== 'teacher') throw new BadRequestException(NOT_A_TEACHER);
   }
 
   // P2002 = unique violation (race fallback), P2025 = record not found.

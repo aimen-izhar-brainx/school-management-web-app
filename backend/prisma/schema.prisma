@@ -31,6 +31,7 @@ model User {
   refreshTokens        RefreshToken[]
   passwordResets       PasswordResetToken[]
   classTeacherSections Section[]            @relation("SectionClassTeacher")
+  taughtClassSubjects  ClassSubject[]       @relation("SubjectTeacher")
 }
 
 model RefreshToken {
@@ -64,7 +65,8 @@ model Class {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  sections Section[]
+  sections      Section[]
+  classSubjects ClassSubject[]
 }
 
 model Section {
@@ -79,4 +81,26 @@ model Section {
 
   @@unique([classId, name])
   @@index([classTeacherId])
+}
+
+model Subject {
+  id        String   @id @default(cuid())
+  name      String   @unique @db.Citext
+  createdAt DateTime @default(now())
+
+  classSubjects ClassSubject[]
+}
+
+model ClassSubject {
+  id        String  @id @default(cuid())
+  classId   String
+  class     Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subjectId String
+  subject   Subject @relation(fields: [subjectId], references: [id])
+  teacherId String?
+  teacher   User?   @relation("SubjectTeacher", fields: [teacherId], references: [id], onDelete: SetNull)
+
+  @@unique([classId, subjectId])
+  @@index([subjectId])
+  @@index([teacherId])
 }
