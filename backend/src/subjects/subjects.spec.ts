@@ -258,3 +258,283 @@ describe('Subjects catalog API (T-016)', () => {
     });
   });
 });
+
+describe('T-026 subject rename + delete', () => {
+  const PREFIX26 = `t026s-${Date.now().toString(36)}-`;
+  const GONE = 'This subject no longer exists.';
+  let app: INestApplication;
+  let jwt: JwtService;
+  let prisma: PrismaService;
+  let seq = 0;
+
+  const label = (l = 's') => `${PREFIX26}${l}-${++seq}`;
+  const tokenFor = (role: string) =>
+    jwt.sign({ sub: 'user-does-not-exist-in-db', email: 'u@example.com', role });
+  const adminAuth = () => `Bearer ${tokenFor('admin')}`;
+  const http = () => request(app.getHttpServer());
+
+  const makeSubject = async (name = label()) => {
+    const res = await http()
+      .post('/api/subjects')
+      .set('Authorization', adminAuth())
+      .send({ name })
+      .expect(201);
+    return res.body as { id: string; name: string };
+  };
+  const rename = (id: string, name: unknown, auth = adminAuth()) =>
+    http().patch(`/api/subjects/${id}`).set('Authorization', auth).send({ name });
+  const del = (id: string) =>
+    http().delete(`/api/subjects/${id}`).set('Authorization', adminAuth());
+  const addToClass = (classId: string, subjectId: string) =>
+    http()
+      .post(`/api/classes/${classId}/subjects`)
+      .set('Authorization', adminAuth())
+      .send({ subjectId });
+  const makeClass = () => prisma.class.create({ data: { name: label('c') } });
+  const nameInDb = async (id: string) =>
+    (await prisma.subject.findUnique({ where: { id } }))?.name;
+
+  beforeAll(async () => {
+    process.env.JWT_ACCESS_SECRET = SECRET;
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true }),
+        PassportModule,
+        JwtModule.register({ secret: SECRET }),
+        PrismaModule,
+        UsersModule,
+        ClassesModule,
+        SubjectsModule,
+      ],
+      providers: [JwtStrategy],
+    }).compile();
+    app = moduleRef.createNestApplication();
+    app.setGlobalPrefix('api');
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    await app.init();
+    jwt = moduleRef.get(JwtService);
+    prisma = moduleRef.get(PrismaService);
+  });
+
+  afterEach(async () => {
+    await prisma.class.deleteMany({
+      where: { name: { startsWith: PREFIX26, mode: 'insensitive' } },
+    });
+    await prisma.subject.deleteMany({
+      where: { name: { startsWith: PREFIX26, mode: 'insensitive' } },
+    });
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  describe('AC-22.1 rename', () => {
+    it('AC-22.1 PATCH responds 200 {id,name} and GET /subjects returns the new name', async () => {
+      const s = await makeSubject();
+      const newName = label('Renamed');
+      const res = await rename(s.id, newName).expect(200);
+      expect(res.body).toEqual({ id: s.id, name: newName });
+      const list = await http().get('/api/subjects').set('Authorization', adminAuth()).expect(200);
+      expect(list.body).toContainEqual({ id: s.id, name: newName });
+      expect(list.body).not.toContainEqual({ id: s.id, name: s.name });
+    });
+
+    it('AC-22.1 GET /classes/:classId/subjects shows the new name for every class that has the subject', async () => {
+      const s = await makeSubject();
+      const classes = [await makeClass(), await makeClass()];
+      for (const c of classes) await addToClass(c.id, s.id).expect(201);
+      const newName = label('Renamed');
+      await rename(s.id, newName).expect(200);
+      for (const c of classes) {
+        const res = await http()
+          .get(`/api/classes/${c.id}/subjects`)
+          .set('Authorization', adminAuth())
+          .expect(200);
+        const text = JSON.stringify(res.body);
+        expect(text).toContain(newName);
+        expect(text).not.toContain(s.name);
+      }
+    });
+
+    it('AC-22.1 the new name is persisted', async () => {
+      const s = await makeSubject();
+      const newName = label('Persisted');
+      await rename(s.id, newName).expect(200);
+      expect(await nameInDb(s.id)).toBe(newName);
+    });
+
+    it('AC-22.1 the name is trimmed when renaming', async () => {
+      const s = await makeSubject();
+      const newName = label('Trim');
+      const res = await rename(s.id, `  ${newName}  `).expect(200);
+      expect(res.body.name).toBe(newName);
+    });
+  });
+
+  describe('AC-22.2 empty name', () => {
+    for (const [desc, value] of [
+      ['empty', ''],
+      ['whitespace-only', '    '],
+    ] as const) {
+      it(`AC-22.2 ${desc} name responds 400 "Please enter a subject name." and keeps the original`, async () => {
+        const s = await makeSubject();
+        const res = await rename(s.id, value).expect(400);
+        expect(messageOf(res.body)).toContain(EMPTY);
+        expect(await nameInDb(s.id)).toBe(s.name);
+      });
+    }
+
+    it('AC-22.2 a missing name field responds 400 with the same message and keeps the original', async () => {
+      const s = await makeSubject();
+      const res = await http()
+        .patch(`/api/subjects/${s.id}`)
+        .set('Authorization', adminAuth())
+        .send({})
+        .expect(400);
+      expect(messageOf(res.body)).toContain(EMPTY);
+      expect(await nameInDb(s.id)).toBe(s.name);
+    });
+  });
+
+  describe('AC-22.3 duplicate name', () => {
+    it('AC-22.3 another subject\'s name in a different case responds 400 "This subject already exists." and is not applied', async () => {
+      const other = await makeSubject(label('Physics'));
+      const s = await makeSubject();
+      for (const dup of [other.name, other.name.toUpperCase(), other.name.toLowerCase()]) {
+        const res = await rename(s.id, dup).expect(400);
+        expect(messageOf(res.body)).toContain(DUPLICATE);
+      }
+      expect(await nameInDb(s.id)).toBe(s.name);
+      expect(await nameInDb(other.id)).toBe(other.name);
+    });
+
+    it('AC-22.3 two concurrent renames to case-variants of the same new name: exactly one wins', async () => {
+      const a = await makeSubject();
+      const b = await makeSubject();
+      const target = label('Race');
+      const results = await Promise.all([
+        rename(a.id, target),
+        rename(b.id, target.toUpperCase()),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual([200, 400]);
+      const loser = results.find((r) => r.status === 400)!;
+      expect(messageOf(loser.body)).toContain(DUPLICATE);
+      const rows = await prisma.subject.findMany({
+        where: { name: { equals: target, mode: 'insensitive' } },
+      });
+      expect(rows).toHaveLength(1);
+    });
+  });
+
+  describe('AC-22.4 delete unused', () => {
+    it('AC-22.4 an unused subject is deleted (204) and is gone from GET /subjects', async () => {
+      const s = await makeSubject();
+      await del(s.id).expect(204);
+      const list = await http().get('/api/subjects').set('Authorization', adminAuth()).expect(200);
+      expect(list.body.map((x: { id: string }) => x.id)).not.toContain(s.id);
+      expect(await nameInDb(s.id)).toBeUndefined();
+    });
+
+    it('AC-22.4 deleting an unknown subject responds 404', async () => {
+      await del('no-such-subject').expect(404);
+    });
+  });
+
+  describe('AC-22.5 delete in use', () => {
+    it('AC-22.5 an assigned subject responds 400 "This subject is in use and can\'t be deleted." and nothing is removed', async () => {
+      const s = await makeSubject();
+      const c = await makeClass();
+      await addToClass(c.id, s.id).expect(201);
+      const res = await del(s.id).expect(400);
+      expect(messageOf(res.body)).toContain(IN_USE);
+      expect(await nameInDb(s.id)).toBe(s.name);
+      expect(await prisma.classSubject.count({ where: { subjectId: s.id } })).toBe(1);
+    });
+  });
+
+  describe('UC-22-E1 case-only change', () => {
+    it('UC-22-E1 "maths" to "Maths" succeeds and is not a duplicate', async () => {
+      const lower = label('maths');
+      const s = await makeSubject(lower);
+      const upper = lower.replace(/maths/, 'Maths');
+      const res = await rename(s.id, upper).expect(200);
+      expect(res.body).toEqual({ id: s.id, name: upper });
+      expect(await nameInDb(s.id)).toBe(upper);
+    });
+
+    it('UC-22-E1 renaming a subject to its own exact name succeeds', async () => {
+      const s = await makeSubject();
+      await rename(s.id, s.name).expect(200);
+    });
+  });
+
+  describe('UC-22-E3 delete vs assign race', () => {
+    it('UC-22-E3 concurrent delete + add-to-class never leaves a class pointing at a missing subject', async () => {
+      for (let i = 0; i < 8; i++) {
+        const s = await makeSubject();
+        const c = await makeClass();
+        const [d, a] = await Promise.all([del(s.id), addToClass(c.id, s.id)]);
+
+        expect([204, 400]).toContain(d.status);
+        expect([201, 404]).toContain(a.status);
+        if (d.status === 400) expect(messageOf(d.body)).toContain(IN_USE);
+        if (a.status === 404) expect(messageOf(a.body)).toContain(GONE);
+        // consistency: exactly one of the two wins
+        expect(d.status === 204).toBe(a.status === 404);
+
+        const rows = await prisma.classSubject.findMany({
+          where: { classId: c.id },
+          include: { subject: true },
+        });
+        for (const r of rows) expect(r.subject).not.toBeNull();
+        if (d.status === 204) {
+          expect(rows).toHaveLength(0);
+          expect(await nameInDb(s.id)).toBeUndefined();
+        } else {
+          expect(rows).toHaveLength(1);
+          expect(await nameInDb(s.id)).toBe(s.name);
+        }
+      }
+    });
+
+    it('UC-22-E3 adding a class subject for an already-deleted subject responds 404 "This subject no longer exists."', async () => {
+      const s = await makeSubject();
+      const c = await makeClass();
+      await del(s.id).expect(204);
+      const res = await addToClass(c.id, s.id).expect(404);
+      expect(messageOf(res.body)).toContain(GONE);
+    });
+  });
+
+  describe('rename edge cases', () => {
+    it('an unknown subject id responds 404 on PATCH', async () => {
+      await rename('no-such-subject', label('x')).expect(404);
+    });
+
+    it('a name longer than 100 characters responds 400 and keeps the original', async () => {
+      const s = await makeSubject();
+      await rename(s.id, PREFIX26 + 'x'.repeat(101)).expect(400);
+      expect(await nameInDb(s.id)).toBe(s.name);
+    });
+  });
+
+  describe('AC-12.1 role enforcement on rename', () => {
+    for (const role of ['teacher', 'student'] as const) {
+      it(`AC-12.1 ${role} gets 403 on PATCH /subjects/:id and the name is unchanged`, async () => {
+        const s = await makeSubject();
+        await rename(s.id, label('Sneaky'), `Bearer ${tokenFor(role)}`).expect(403);
+        expect(await nameInDb(s.id)).toBe(s.name);
+      });
+    }
+
+    it('AC-12.1 no token gives 401 on PATCH /subjects/:id and the name is unchanged', async () => {
+      const s = await makeSubject();
+      await http()
+        .patch(`/api/subjects/${s.id}`)
+        .send({ name: label('Anon') })
+        .expect(401);
+      expect(await nameInDb(s.id)).toBe(s.name);
+    });
+  });
+});

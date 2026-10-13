@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { Roles } from '../common/decorators/roles.decorator.js';
 import { RolesGuard } from '../common/guards/roles.guard.js';
@@ -20,6 +20,13 @@ export class SubjectsController {
   @Roles('admin')
   create(@Body() dto: SubjectNameDto) {
     return this.subjects.create(dto.name);
+  }
+
+  @Patch(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
+  rename(@Param('id') id: string, @Body() dto: SubjectNameDto) {
+    return this.subjects.rename(id, dto.name);
   }
 
   @Delete(':id')

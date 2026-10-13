@@ -18,13 +18,23 @@ export class SubjectsService {
   }
 
   async create(name: string) {
-    const clash = await this.prisma.subject.findUnique({
-      where: { name },
-      select: { id: true },
-    });
-    if (clash) throw new BadRequestException(DUPLICATE);
+    await this.assertNameFree(name);
     try {
       return await this.prisma.subject.create({
+        data: { name },
+        select: SELECT,
+      });
+    } catch (e) {
+      throw this.translate(e);
+    }
+  }
+
+  async rename(id: string, name: string) {
+    await this.assertExists(id);
+    await this.assertNameFree(name, id);
+    try {
+      return await this.prisma.subject.update({
+        where: { id },
         data: { name },
         select: SELECT,
       });
@@ -44,6 +54,15 @@ export class SubjectsService {
     } catch (e) {
       throw this.translate(e);
     }
+  }
+
+  // The name column is citext, so this lookup is case-insensitive.
+  private async assertNameFree(name: string, exceptId?: string) {
+    const clash = await this.prisma.subject.findUnique({
+      where: { name },
+      select: { id: true },
+    });
+    if (clash && clash.id !== exceptId) throw new BadRequestException(DUPLICATE);
   }
 
   private async assertExists(id: string) {
