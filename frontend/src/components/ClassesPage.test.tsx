@@ -108,6 +108,15 @@ interface GetRoutes {
   subjects?: { id: string; name: string }[]
   classSubjects?: Record<string, ClassSubjectRow[]>
   students?: StudentRow[]
+  // T-029: per-class delete-impact response, or an error to reject with.
+  // Defaults to all zeros (named after the class in `classes`).
+  deleteImpact?: Record<string, DeleteImpact | Error>
+}
+interface DeleteImpact {
+  className: string
+  sections: number
+  subjectAssignments: number
+  students: number
 }
 interface ClassSubjectRow {
   id: string
@@ -127,6 +136,13 @@ interface StudentRow {
 function mockGet(routes: GetRoutes) {
   mockApi.get.mockImplementation((url: string) => {
     if (url === '/classes') return Promise.resolve(routes.classes ?? [])
+    const impactMatch = url.match(/^\/classes\/([^/]+)\/delete-impact$/)
+    if (impactMatch) {
+      const configured = routes.deleteImpact?.[impactMatch[1]]
+      if (configured instanceof Error) return Promise.reject(configured)
+      const name = routes.classes?.find((c) => c.id === impactMatch[1])?.name ?? ''
+      return Promise.resolve(configured ?? { className: name, sections: 0, subjectAssignments: 0, students: 0 })
+    }
     const sectionsMatch = url.match(/^\/classes\/([^/]+)\/sections$/)
     if (sectionsMatch) return Promise.resolve(routes.sections?.[sectionsMatch[1]] ?? [])
     if (url === '/subjects') return Promise.resolve(routes.subjects ?? [])
@@ -309,7 +325,8 @@ describe('ClassesPage class list (T-014)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /delete class/i }))
 
-    expect(window.confirm).toHaveBeenCalled()
+    // T-029: the confirmation now opens after the async impact request.
+    await waitFor(() => expect(window.confirm).toHaveBeenCalled())
     expect(mockApi.delete).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: /^Grade 5/ })).toBeInTheDocument()
   })
@@ -1172,5 +1189,156 @@ describe('ClassesPage subject catalog rename/delete (T-027)', () => {
       expect(isHiddenOrDisabled(screen.queryByRole('button', { name: `Rename ${name}` }))).toBe(true)
       expect(isHiddenOrDisabled(screen.queryByRole('button', { name: `Delete ${name}` }))).toBe(true)
     }
+  })
+})
+
+
+// ---------------------------------------------------------------------------
+// T-029: delete class confirmation with impact counts
+// ---------------------------------------------------------------------------
+
+const PLAIN_CONFIRM = 'Delete this class? This cannot be undone.'
+const impactUrl = '/classes/c1/delete-impact'
+
+describe('ClassesPage delete class impact (T-029)', () => {
+  async function openWithImpact(
+    sections: number,
+    subjectAssignments: number,
+    students: number,
+    extra: Partial<GetRoutes> = {},
+  ) {
+    const routes: GetRoutes = {
+      classes: [grade5, grade6],
+      deleteImpact: { c1: { className: 'Grade 5', sections, subjectAssignments, students } },
+      ...extra,
+    }
+    mockGet(routes)
+    renderPage()
+    await selectClass('Grade 5')
+    return routes
+  }
+
+  async function clickDeleteAndGetMessage(confirmResult = false) {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(confirmResult)
+    fireEvent.click(screen.getByRole('button', { name: /delete class/i }))
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalledTimes(1))
+    return String(confirmSpy.mock.calls[0][0])
+  }
+
+  it('AC-23.1 fetches the impact for the class and shows the full counts message', async () => {
+    await openWithImpact(2, 4, 30)
+    const message = await clickDeleteAndGetMessage()
+
+    expect(mockApi.get).toHaveBeenCalledWith(impactUrl)
+    expect(message).toBe(
+      'Deleting Grade 5 will also delete 2 sections and 4 subject assignments. 30 students will be unassigned from their section.',
+    )
+  })
+
+  it('AC-23.1 uses singular wording for counts of 1', async () => {
+    await openWithImpact(1, 1, 1)
+    const message = await clickDeleteAndGetMessage()
+
+    expect(message).toBe(
+      'Deleting Grade 5 will also delete 1 section and 1 subject assignment. 1 student will be unassigned from their section.',
+    )
+  })
+
+  it('AC-23.1 omits parts whose count is 0 (sections only)', async () => {
+    await openWithImpact(2, 0, 0)
+    const message = await clickDeleteAndGetMessage()
+
+    expect(message).toBe('Deleting Grade 5 will also delete 2 sections.')
+  })
+
+  it('AC-23.1 omits the sections part when there are none (subject assignments only)', async () => {
+    await openWithImpact(0, 3, 0)
+    const message = await clickDeleteAndGetMessage()
+
+    expect(message).toBe('Deleting Grade 5 will also delete 3 subject assignments.')
+  })
+
+  it('AC-23.1 omits the delete part when only students are affected', async () => {
+    await openWithImpact(0, 0, 5)
+    const message = await clickDeleteAndGetMessage()
+
+    expect(message).toContain('5 students will be unassigned from their section.')
+    expect(message).not.toMatch(/section(s)? and|subject assignment/)
+    expect(message).not.toMatch(/also delete/)
+  })
+
+  it('AC-23.2 confirming sends DELETE and removes the class, its panels and the selection immediately', async () => {
+    await openWithImpact(2, 4, 30, {
+      sections: { c1: [sectionA] },
+      classSubjects: { c1: [] },
+    })
+    mockApi.delete.mockResolvedValue(null)
+    await clickDeleteAndGetMessage(true)
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Grade 5/ })).not.toBeInTheDocument())
+    expect(mockApi.delete).toHaveBeenCalledTimes(1)
+    expect(mockApi.delete).toHaveBeenCalledWith('/classes/c1')
+    expect(screen.getByRole('button', { name: /^Grade 6/ })).toBeInTheDocument()
+    // selection cleared: no class header and no panels or class controls remain
+    expect(screen.queryByRole('heading', { name: 'Grade 5' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /delete class/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /rename/i })).not.toBeInTheDocument()
+    expect(screen.queryByText('A')).not.toBeInTheDocument()
+  })
+
+  it('AC-23.5 cancelling the confirmation sends no DELETE and keeps the class selected', async () => {
+    await openWithImpact(2, 4, 30)
+    await clickDeleteAndGetMessage(false)
+
+    expect(mockApi.delete).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /^Grade 5/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /delete class/i })).toBeInTheDocument()
+  })
+
+  it('UC-23-E1 a class with all counts 0 shows the plain UC-03 confirmation with no counts', async () => {
+    await openWithImpact(0, 0, 0)
+    const message = await clickDeleteAndGetMessage()
+
+    expect(message).toBe(PLAIN_CONFIRM)
+    expect(message).not.toMatch(/\d/)
+    expect(message).not.toMatch(/also delete|unassigned/)
+  })
+
+  it('UC-23-E1 confirming the plain confirmation still deletes the class', async () => {
+    await openWithImpact(0, 0, 0)
+    mockApi.delete.mockResolvedValue(null)
+    await clickDeleteAndGetMessage(true)
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Grade 5/ })).not.toBeInTheDocument())
+    expect(mockApi.delete).toHaveBeenCalledWith('/classes/c1')
+  })
+
+  it('shows the generic error, opens no dialog and sends no DELETE when the impact request fails', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await openWithImpact(2, 4, 30, { deleteImpact: { c1: new TypeError('Failed to fetch') } })
+
+    fireEvent.click(screen.getByRole('button', { name: /delete class/i }))
+
+    expect(await screen.findByText(GENERIC_ERROR)).toBeInTheDocument()
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(mockApi.delete).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /^Grade 5/ })).toBeInTheDocument()
+  })
+
+  it('UC-03-E1 impact request 404 shows "This class no longer exists." and refreshes the list', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await openWithImpact(2, 4, 30, { deleteImpact: { c1: new ApiError(404, { message: GONE }) } })
+    const before = classListCalls()
+    // server state now: Grade 5 is gone
+    mockGet({ classes: [grade6], deleteImpact: { c1: new ApiError(404, { message: GONE }) } })
+
+    fireEvent.click(screen.getByRole('button', { name: /delete class/i }))
+
+    expect(await screen.findByText(GONE)).toBeInTheDocument()
+    await waitFor(() => expect(classListCalls()).toBeGreaterThan(before))
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Grade 5/ })).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /^Grade 6/ })).toBeInTheDocument()
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(mockApi.delete).not.toHaveBeenCalled()
   })
 })

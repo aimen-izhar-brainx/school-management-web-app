@@ -11,7 +11,7 @@
 | T-026 | Subject rename + delete (backend) | DONE | 1 | |
 | T-027 | Subject rename + delete UI (frontend) | DONE | 1 | |
 | T-028 | Delete class with sections, subjects or students (backend) | DONE | 1 | |
-| T-029 | Delete class confirmation with impact counts (frontend) | TODO | 0 | |
+| T-029 | Delete class confirmation with impact counts (frontend) | DONE | 1 | |
 | T-020 | Fixed Period schedule (backend) | TODO | 0 | |
 | T-021 | TimetableEntry CRUD API (backend, no conflict checking yet) | TODO | 0 | |
 | T-022 | Teacher double-booking conflict detection (backend) | TODO | 0 | |

@@ -1,7 +1,8 @@
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { AuthUser } from '../lib/auth'
-import { errorMessage } from '../lib/errorMessage'
+import { type DeleteImpact, deleteImpactMessage } from '../lib/deleteImpactMessage'
+import { errorMessage, isNotFound } from '../lib/errorMessage'
 import { api, ApiError } from '../lib/http'
 import { ClassSubjectsPanel } from './ClassSubjectsPanel'
 import type { TeacherOption } from '../lib/types'
@@ -165,17 +166,18 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
 
   const handleDeleteClass = async (id: string) => {
     if (isDeleting) return
-    if (!window.confirm('Delete this class? This cannot be undone.')) return
 
     setClassActionError(null)
     setIsDeleting(true)
     try {
+      const impact = await api.get<DeleteImpact>(`/classes/${id}/delete-impact`)
+      if (!window.confirm(deleteImpactMessage(impact))) return
       await api.delete(`/classes/${id}`)
       setClasses((prev) => prev.filter((schoolClass) => schoolClass.id !== id))
       setSelectedClassId((prev) => (prev === id ? null : prev))
     } catch (error) {
       setClassActionError(errorMessage(error))
-      if (error instanceof ApiError && error.status === 404) await handleClassGone()
+      if (isNotFound(error)) await handleClassGone()
     } finally {
       setIsDeleting(false)
     }
