@@ -1,6 +1,6 @@
 | Ticket | Title | Status | Tries | Note |
 |---|---|---|---|---|
-| T-012 | RolesGuard + @Roles decorator (backend infrastructure) | TODO | 0 | |
+| T-012 | RolesGuard + @Roles decorator (backend infrastructure) | DONE | 2 | try 2: pre-commit review asked for Role typing + guard branch tests |
 | T-013 | Class CRUD API (backend) | TODO | 0 | |
 | T-014 | Wire ClassesPage class list to real API (frontend) | TODO | 0 | |
 | T-015 | Section CRUD + class-teacher assignment (backend) | TODO | 0 | |
