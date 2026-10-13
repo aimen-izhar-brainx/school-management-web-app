@@ -94,6 +94,7 @@ const grade6 = { id: 'c2', name: 'Grade 6' }
 
 const teacher: AuthUser = { id: 't-1', name: 'Tina Teacher', email: 't@example.com', role: 'teacher' }
 const student: AuthUser = { id: 's-1', name: 'Sam Student', email: 's@example.com', role: 'student' }
+const parent: AuthUser = { id: 'p-1', name: 'Pat Parent', email: 'p@example.com', role: 'parent' }
 
 interface SectionRow {
   id: string
@@ -384,6 +385,7 @@ describe('ClassesPage class list (T-014)', () => {
   it.each([
     ['teacher', teacher],
     ['student', student],
+    ['parent', parent],
   ])('AC-04.3 %s does not see the New class input, Add class, Rename or Delete class controls', async (_label, viewer) => {
     // renderWithClasses waits for the list to load; selecting the class makes
     // Rename/Delete class present for an admin, so their absence here is meaningful.
@@ -586,6 +588,7 @@ describe('ClassesPage sections (T-018)', () => {
   it.each([
     ['teacher', teacher],
     ['student', student],
+    ['parent', parent],
   ])('AC-12.2 %s sees the sections but no enabled add-section, remove-section or class-teacher controls', async (_label, viewer) => {
     await openGrade5({}, { user: viewer })
     expect(await screen.findByText(sectionLabel('A'))).toBeInTheDocument()
@@ -875,6 +878,7 @@ describe('ClassesPage subjects + students (T-019)', () => {
   it.each([
     ['teacher', teacher],
     ['student', student],
+    ['parent', parent],
   ])('AC-12.2 %s sees the subjects but no enabled subject or student-assignment write controls', async (_label, viewer) => {
     await openGrade5T19(
       { classSubjects: { c1: [mathsRow] }, students: [{ ...sam, sectionId: 's1' }, { ...priya }] },
@@ -1181,6 +1185,7 @@ describe('ClassesPage subject catalog rename/delete (T-027)', () => {
   it.each([
     ['teacher', teacher],
     ['student', student],
+    ['parent', parent],
   ])('AC-12.2 %s sees no enabled catalog Rename or Delete controls', async (_label, viewer) => {
     await openGrade5T19({ classSubjects: { c1: [mathsRow] } }, { user: viewer })
     expect(await screen.findByText('Maths')).toBeInTheDocument()

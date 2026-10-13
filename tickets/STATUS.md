@@ -19,4 +19,4 @@
 | T-023 | Wire TimetablePage admin builder (frontend) | DONE | 3 | user: always redirect non-admins (AC-17.2) |
 | T-024 | GET /timetable/me endpoint (backend) | DONE | 1 | |
 | T-025 | Wire MyTimetablePage for teachers and students (frontend) | DONE | 1 | |
-| T-031 | Block Parent role from Academic Management (backend + frontend) | TODO | 0 | |
+| T-031 | Block Parent role from Academic Management (backend + frontend) | DONE | 1 | user: no parent entry to My Timetable (safety-net page only) |

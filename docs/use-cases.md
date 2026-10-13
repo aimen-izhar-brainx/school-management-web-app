@@ -482,3 +482,4 @@ UC-22 to UC-25 were added after tickets T-012 to T-025 were created. They are gr
 - Edge cases:
   - UC-25-E1: No token / expired token → 401 Unauthorized, same as other roles.
 - Not included: a parent viewing their child's timetable (there is no parent–child link in v1).
+- Not included: a "My Timetable" button on the parent's home screen. A parent has no timetable, so the page is a safety net only: if a parent ever lands on it (for example through the non-admin redirect in UC-17), they see "Not available for your role." (Decision during /build.)

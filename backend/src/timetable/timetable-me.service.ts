@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import type { Role } from '../generated/prisma/client.js';
 import { PeriodsService } from '../periods/periods.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -16,12 +16,7 @@ export class TimetableMeService {
   async getMine(userId: string, role: Role) {
     if (role === 'teacher') return this.forTeacher(userId);
     if (role === 'student') return this.forStudent(userId);
-    // Admin/parent behaviour on this endpoint is owned by T-031.
-    return {
-      kind: 'none' as const,
-      periods: await this.periods.list(),
-      entries: [],
-    };
+    throw new ForbiddenException();
   }
 
   private async forTeacher(teacherId: string) {

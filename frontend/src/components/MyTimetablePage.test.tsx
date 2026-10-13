@@ -50,6 +50,8 @@ const mockApi = api as unknown as {
 const studentUser: AuthUser = { id: 'student-1', name: 'Jamie Student', email: 'jamie@example.com', role: 'student' }
 const teacherUser: AuthUser = { id: 'teacher-1', name: 'Tina Teacher', email: 'tina@example.com', role: 'teacher' }
 
+const parentUser: AuthUser = { id: 'parent-1', name: 'Pat Parent', email: 'pat@example.com', role: 'parent' }
+
 const PERIODS = [
   { id: 'period-1', order: 1, label: 'Period 1', startTime: '08:00', endTime: '08:45', isBreak: false },
   { id: 'period-2', order: 2, label: 'Period 2', startTime: '08:45', endTime: '09:30', isBreak: false },
@@ -413,5 +415,28 @@ describe('MyTimetablePage as a student (UC-19, UC-20)', () => {
     expect(
       screen.queryByText("You haven't been assigned to a class section yet. Contact your school admin."),
     ).not.toBeInTheDocument()
+  })
+})
+
+describe('MyTimetablePage as a parent (T-031)', () => {
+  it('AC-25.3 shows "Not available for your role." with no grid and no alert, and does not fetch', async () => {
+    mockApi.get.mockResolvedValue(STUDENT_RESPONSE)
+    renderPage(parentUser)
+
+    expect(await screen.findByText('Not available for your role.')).toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByText(/something went wrong/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/loading/i)).not.toBeInTheDocument()
+    // let any stray effect run, then confirm no request was made
+    await new Promise((r) => setTimeout(r, 0))
+    expect(mockApi.get).not.toHaveBeenCalled()
+  })
+
+  it('AC-25.3 keeps the shell so the parent can go back', async () => {
+    const { props } = renderPage(parentUser)
+    await screen.findByText('Not available for your role.')
+    fireEvent.click(screen.getByText(/back to dashboard/i))
+    expect(props.onBack).toHaveBeenCalledTimes(1)
   })
 })

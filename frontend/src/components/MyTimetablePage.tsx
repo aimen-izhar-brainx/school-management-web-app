@@ -56,7 +56,20 @@ function Timetable({ timetable }: { timetable: MyTimetable }) {
 }
 
 /** Read-only weekly timetable for teachers (all their sections) and students (their section). */
-export function MyTimetablePage({ onBack, onSignOut }: MyTimetablePageProps) {
+export function MyTimetablePage({ user, onBack, onSignOut }: MyTimetablePageProps) {
+  if (user.role === 'parent') {
+    return (
+      <DashboardShell onBack={onBack} onSignOut={onSignOut} mainClassName="mx-auto max-w-6xl px-6 py-12">
+        <h1 className="mt-4 text-2xl font-bold text-slate-900">My timetable</h1>
+        <Message>Not available for your role.</Message>
+      </DashboardShell>
+    )
+  }
+
+  return <MyTimetableContent onBack={onBack} onSignOut={onSignOut} />
+}
+
+function MyTimetableContent({ onBack, onSignOut }: Omit<MyTimetablePageProps, 'user'>) {
   const [state, setState] = useState<LoadState>({ status: 'loading' })
 
   useEffect(() => {

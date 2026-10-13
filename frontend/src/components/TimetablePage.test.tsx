@@ -40,6 +40,7 @@ const mockApi = api as unknown as {
 
 const admin: AuthUser = { id: 'admin-1', name: 'Avery Admin', email: 'avery@example.com', role: 'admin' }
 const teacher: AuthUser = { id: 'teacher-1', name: 'Tina Teacher', email: 'tina@example.com', role: 'teacher' }
+const parent: AuthUser = { id: 'parent-1', name: 'Pat Parent', email: 'pat@example.com', role: 'parent' }
 
 const PERIODS = [
   { id: 'period-1', order: 1, label: 'Period 1', startTime: '08:00', endTime: '08:45', isBreak: false },
@@ -642,11 +643,14 @@ describe('TimetablePage review follow-ups', () => {
 // AC-17.2 page-level: a non-admin is never given write controls
 // ---------------------------------------------------------------------------
 describe('TimetablePage as a non-admin (AC-17.2)', () => {
-  it('AC-17.2 a teacher gets no subject selectors, no Clear buttons and no writes', async () => {
+  it.each([
+    ['teacher', teacher],
+    ['parent', parent],
+  ])('AC-25.3 / AC-17.2 a %s gets no subject selectors, no Clear buttons and no writes', async (_label, viewer) => {
     const fixture = defaultFixture()
     fixture.timetables.s5a = { periods: PERIODS, entries: [entry('e1', 'period-1', 'mon', MATH, DANIEL)] }
     setupGet(fixture)
-    renderPage(teacher)
+    renderPage(viewer)
 
     // give the page time to load whatever it loads
     await act(async () => {
