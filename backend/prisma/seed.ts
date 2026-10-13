@@ -2,6 +2,7 @@ import 'dotenv/config';
 import bcrypt from 'bcrypt';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.js';
+import { FIXED_PERIODS } from './periods.js';
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
@@ -25,6 +26,15 @@ async function main() {
     });
     console.log(`Seeded ${user.role} account: ${user.email} / ${user.password}`);
   }
+
+  for (const { id, ...period } of FIXED_PERIODS) {
+    await prisma.period.upsert({
+      where: { order: period.order },
+      update: period,
+      create: { id, ...period },
+    });
+  }
+  console.log(`Seeded ${FIXED_PERIODS.length} fixed periods`);
 }
 
 main()

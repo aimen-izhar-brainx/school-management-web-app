@@ -109,3 +109,20 @@ model ClassSubject {
   @@index([subjectId])
   @@index([teacherId])
 }
+
+model Period {
+  id        String  @id @default(cuid())
+  order     Int     @unique
+  startTime String
+  endTime   String
+  isBreak   Boolean @default(false)
+  label     String?
+}
+
+enum DayOfWeek {
+  mon
+  tue
+  wed
+  thu
+  fri
+}

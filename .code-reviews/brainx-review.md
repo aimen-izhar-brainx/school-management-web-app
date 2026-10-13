@@ -1,11 +1,15 @@
 ---
-diff_hash: a668c6c6e92e2afe0a3205850064b33bc1567a74618b2b74863d5460d6d4a81c
-reviewed_at: 2026-10-13T10:08:02Z
+diff_hash: 457fc0ae1fec97120636ac6950f538ce725e345a9be69e38a69b4500f8bc5a81
+branch: academic-management
+author: brainxtechnologies
+timestamp: 2026-10-13T10:12:28Z
+reviewed_at: 2026-10-13T10:20:00Z
+stack: nestjs
 ---
 
 ## Summary
 
-T-029 (frontend): "Delete class" now fetches `GET /classes/:id/delete-impact` (backend T-028, endpoint exists) before confirming, and builds the confirmation text via the new `deleteImpactMessage` helper. Errors from the impact request reuse the existing error/404 handling. Tests cover counts, singular/plural, zero-count plain confirmation, cancel, failure and 404. Stack: React (frontend only staged; no cross-repo contract change).
+T-020 (backend only): adds the `Period` model and `DayOfWeek` enum, a migration that creates the table and inserts the 7 fixed school-day rows, a seed upsert driven by `prisma/periods.ts`, and a read-only `GET /api/periods` endpoint behind `JwtAuthGuard` (all roles). Endpoint follows the existing subjects/classes controller pattern; the select is explicit and no write routes exist. Tests cover exact rows, shape, auth and absence of write routes. No frontend change staged, so no cross-repo contract change.
 
 ## Findings
 
@@ -14,16 +18,31 @@ T-029 (frontend): "Delete class" now fetches `GET /classes/:id/delete-impact` (b
 ### High (0)
 
 ### Medium (0)
+- **backend/prisma/migrations/20261013100955_add_period/migration.sql:19** — The schedule is defined twice (INSERT in the migration and `FIXED_PERIODS` in `prisma/periods.ts`) and the migration mixes a data backfill into a schema migration. The only link is a "keep in sync" comment; if the constants change, existing databases keep the old rows from the migration while the seed's `update: period` silently overwrites them, so environments can diverge. *(maintainability)*
+  - status: fixed
+  - dev_reasoning: N/A
+  - ai_reasoning: Fixed. `periods.spec.ts` now has two drift-guard tests: DB rows deep-equal `FIXED_PERIODS`, and the migration INSERT contains every `FIXED_PERIODS` row with a matching row count, so the two definitions can no longer diverge silently.
 
-### Low (1)
-- **frontend/src/components/ClassesPage.test.tsx:1198** — Test redefines the plain-confirmation string (`PLAIN_CONFIRM`) instead of importing the exported `PLAIN_DELETE_CONFIRM` from `lib/deleteImpactMessage.ts`, duplicating a string that can drift. *(maintainability)*
+### Low (2)
+- **backend/prisma/schema.prisma:123** — `DayOfWeek` enum is added but not referenced by any model or code in this diff (unused until the TimetableEntry ticket). *(maintainability)*
   - status: ignored
-  - dev_reasoning: Intentional. The test pins the exact user-visible UC-03 wording as an independent literal. Importing `PLAIN_DELETE_CONFIRM` would make the assertion compare the constant with itself, so a wording regression in the constant would go unnoticed.
-  - ai_reasoning: The constant is exported specifically for reuse; importing it keeps a single source of truth. Hard-coding the literal in a test is arguably intentional (guards the UC-03 wording), so impact is minimal.
+  - dev_reasoning: Intentional. T-020's technical notes and docs/plan.md add `DayOfWeek` together with `Period`, and the very next ticket (T-021, TimetableEntry) uses it.
+  - ai_reasoning: Likely intentional per the ticket's technical notes; consider adding it alongside the model that uses it.
+- **backend/prisma/schema.prisma:117** — `startTime`/`endTime` are free-form `String` and `label` is nullable although every row has one; the DB does not enforce the "HH:mm" format or non-null label. *(consistency)*
+  - status: skipped
+  - dev_reasoning: Deferred. The plan fixes the schema as plain strings with an optional label, and Period rows are fixed and not admin-editable in v1 (no write endpoints, and tests assert exact values). Add CHECK constraints and validation if period editing is ever introduced.
+  - ai_reasoning: Acceptable while rows are fixed and not admin-editable, but would need a CHECK/validation if editing is ever added.
 
 ## Reviewed files
-- frontend/src/components/ClassesPage.test.tsx
-- frontend/src/components/ClassesPage.tsx
-- frontend/src/lib/deleteImpactMessage.ts
+- backend/prisma/migrations/20261013100955_add_period/migration.sql
+- backend/prisma/periods.ts
+- backend/prisma/schema.prisma
+- backend/prisma/seed.ts
+- backend/src/app.module.ts
+- backend/src/periods/periods.controller.ts
+- backend/src/periods/periods.module.ts
+- backend/src/periods/periods.service.ts
+- backend/src/periods/periods.spec.ts
 - tickets/STATUS.md (docs, skimmed)
-- tickets/T-029.md (docs, skimmed)
+- tickets/T-020.md (docs, skimmed)
+- .code-reviews/brainx-review.md (deleted previous review, skipped)
