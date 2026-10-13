@@ -1,11 +1,11 @@
 ---
-diff_hash: 58d787593d319f8516c1eaf2648f994869386018cabc7d0a13e39ee866cfcb5c
-reviewed_at: 2026-10-13T11:18:38Z
+diff_hash: 974b9188768d78c0a7fe84e64706ece0204d18b70f17d9b75259400d25dab445
+reviewed_at: 2026-10-13T12:23:39Z
 ---
 
 ## Summary
 
-T-023 frontend: TimetablePage is rewired to the real API (classes, sections, periods, per-section timetable, PUT/DELETE of cells), with the grid extracted into a new TimetableGrid component. Shared types (`ClassSubject`, `DayId`, `TimetablePeriod`, `TimetableEntry`) move to `lib/types.ts`, `api.put` and a `cellKey` helper are added, the hardcoded SUBJECTS constant is removed, and TimetableBreakRow takes primitive props. Tests are added or expanded, and a release report is added. Stack: React 19 + Vite + TypeScript. `tsc -b` and oxlint are clean and the 25 timetable/App tests pass. Role gating is client-side only (`user.role === 'admin'`), and the backend is expected to enforce it (T-031 tracks this). Only minor issues were found.
+T-024 backend: adds `GET /api/timetable/me` (JwtAuthGuard, any role). Teachers get all their own slots across sections (subject, section, class); students get their section's full grid via a new `TimetableService.gridFor`, or `section: null` when unassigned; admin/parent get `kind: 'none'` (deferred to T-031). Shared Prisma selects are extracted to `entry-select.ts`. Queries are scoped by the JWT `sub`, so there is no IDOR path. Stack: NestJS + Prisma. Tests and ticket status are updated. No correctness or security problems found; only minor items.
 
 ## Findings
 
@@ -13,34 +13,26 @@ T-023 frontend: TimetablePage is rewired to the real API (classes, sections, per
 
 ### High (0)
 
-### Medium (1)
-- **frontend/src/components/TimetablePage.tsx:122** — The in-flight guard and `busyKeys` are keyed by `periodId:day` only, not by section. If the admin switches sections while a save is pending, the same cell in the newly selected section shows as busy, and a click on it is silently ignored by the `inFlight` check. The old save's result is also discarded without feedback, since `request !== latestLoad.current`. *(correctness)*
-  - status: open
-  - dev_reasoning: N/A
-  - ai_reasoning: Include the section id in the key (e.g. `${section.id}:${cellKey}`), or clear `busyKeys` and `inFlight` in `selectSection`. A pending save for the previous section still completes server-side, which is acceptable.
+### Medium (0)
 
 ### Low (2)
-- **frontend/src/components/MyTimetablePage.tsx:104** — The `TimetableBreakRow` JSX is written as `return <TimetableBreakRow` with props indented unlike the multi-line `return (...)` form used in the new TimetableGrid, and the closing tag is misindented. *(consistency)*
-  - status: open
-  - dev_reasoning: N/A
-  - ai_reasoning: Wrap in `return (...)` and indent like TimetableGrid.tsx so the two call sites match.
-- **frontend/src/components/TimetablePage.tsx:75** — The directory load fires one `/classes/:id/sections` request per class (N+1) after fetching the class list. *(maintainability)*
-  - status: skipped
-  - dev_reasoning: Deferred. A single school has a few dozen classes at most, the requests run in parallel, and this matches the existing per-class sections endpoint added in T-018. Add a combined sections-with-class endpoint if class counts grow.
-  - ai_reasoning: Fine at school scale and consistent with the existing per-class fetch pattern. Consider a single endpoint returning sections with class names if class counts grow.
+- **backend/tsconfig.build.tsbuildinfo:1** — A generated incremental-build cache is tracked and modified in this commit, adding noise and merge conflicts unrelated to T-024. *(maintainability)*
+  - status: ignored
+  - dev_reasoning: Pre-existing tracked file that the hook's `git add -A` stages on every commit. Untracking it is a repo-hygiene decision deferred to the repo owner (same as earlier commits).
+  - ai_reasoning: The file is already tracked, so this is pre-existing, but it should be gitignored and untracked, or left out of feature commits.
+- **backend/src/timetable/timetable-me.controller.ts:13** — The handler reads `req.user.sub`/`role` through `@Req()` and the service branches on `role` inline. There is no `@CurrentUser()` decorator in `src/common/decorators`, so this is only a convention note. *(consistency)*
+  - status: ignored
+  - dev_reasoning: Follows the existing project convention. `auth.controller.ts` reads the caller via `@Req()` the same way, and this is the only other endpoint that needs the caller. Introducing a `@CurrentUser()` decorator is a cross-cutting refactor outside T-024's scope.
+  - ai_reasoning: Acceptable for now. A `@CurrentUser()` decorator would remove the `Request & { user }` typing repeated across controllers once more endpoints need the caller.
 
 ## Reviewed files
-- docs/release-report.md
-- frontend/src/App.timetableAccess.test.tsx
-- frontend/src/components/ClassSubjectsPanel.tsx
-- frontend/src/components/MyTimetablePage.tsx
-- frontend/src/components/TimetableBreakRow.tsx
-- frontend/src/components/TimetableGrid.tsx
-- frontend/src/components/TimetablePage.test.tsx (skimmed; tests pass)
-- frontend/src/components/TimetablePage.tsx
-- frontend/src/data/timetable.ts
-- frontend/src/lib/http.ts
-- frontend/src/lib/timetable.ts
-- frontend/src/lib/types.ts
+- .code-reviews/brainx-review.md (deleted, previous review)
+- backend/src/timetable/entry-select.ts
+- backend/src/timetable/timetable-me.controller.ts
+- backend/src/timetable/timetable-me.service.ts
+- backend/src/timetable/timetable-me.spec.ts
+- backend/src/timetable/timetable.module.ts
+- backend/src/timetable/timetable.service.ts
+- backend/tsconfig.build.tsbuildinfo (skipped, generated)
 - tickets/STATUS.md
-- .code-reviews/brainx-review.md (deleted; previous review, replaced by this one)
+- tickets/T-024.md

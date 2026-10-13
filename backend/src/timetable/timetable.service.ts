@@ -8,6 +8,7 @@ import type { DayOfWeek, Prisma } from '../generated/prisma/client.js';
 import { prismaErrorCode, violatedConstraintFields } from '../common/prisma-errors.js';
 import { PeriodsService } from '../periods/periods.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { ENTRY_ORDER_BY, ENTRY_SELECT } from './entry-select.js';
 
 const SECTION_NOT_FOUND = 'This section no longer exists.';
 const PERIOD_NOT_FOUND = 'This period does not exist.';
@@ -17,13 +18,6 @@ const NOT_ON_CLASS = 'This subject is not assigned to this class.';
 const NO_TEACHER = 'Assign a teacher to this subject first.';
 const SLOT_CHANGED = 'This slot was just changed by someone else. Please try again.';
 const TEACHER_BUSY = 'Teacher is already scheduled at this time.';
-const ENTRY_SELECT = {
-  id: true,
-  periodId: true,
-  dayOfWeek: true,
-  subject: { select: { id: true, name: true } },
-  teacher: { select: { id: true, name: true } },
-} as const;
 
 type TeacherSlot = {
   sectionId: string;
@@ -41,12 +35,17 @@ export class TimetableService {
 
   async getGrid(sectionId: string) {
     await this.findSection(sectionId);
+    return this.gridFor(sectionId);
+  }
+
+  // Grid without the section existence check, for callers that already read the section.
+  async gridFor(sectionId: string) {
     const [periods, entries] = await Promise.all([
       this.periods.list(),
       this.prisma.timetableEntry.findMany({
         where: { sectionId },
         select: ENTRY_SELECT,
-        orderBy: [{ dayOfWeek: 'asc' }, { period: { order: 'asc' } }],
+        orderBy: [...ENTRY_ORDER_BY],
       }),
     ]);
     return { periods, entries };
