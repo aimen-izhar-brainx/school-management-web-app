@@ -1,191 +1,151 @@
-# Plan: Academic Management
+# Plan: Attendance Management
 
 ## Tech stack
 
-Inherited from the existing app — no new dependencies.
+No new dependencies — reuse the existing stack.
 
-- **Backend:** NestJS 12 modules + Prisma 7 + Postgres — same pattern as the existing `auth`/`users` modules.
-- **Frontend:** React 19 + Vite + TS + Tailwind v4 — rewires existing mock pages; no calendar/scheduling library needed since periods are fixed and the week is Monday–Friday.
-- **Auth:** reuses the existing JWT (the token payload already carries `role`). Adds a `RolesGuard` + `@Roles()` decorator, which doesn't exist yet.
+- **Backend:** NestJS 12 modules + Prisma 7 + Postgres — same pattern as the existing `classes`/`timetable` modules.
+- **Frontend:** React 19 + Vite + TS + Tailwind v4 — rewires existing mock pages (`MarkAttendancePage`, `AttendancePage`, `MyAttendancePage`) to call real APIs instead of local state.
+- **Auth:** reuses the existing JWT + `RolesGuard`/`@Roles()` decorator (no new guard needed).
 - **Testing:** Vitest, same as current setup (`npm run test` in both `backend/` and `frontend/`).
 
 ## Architecture
 
-**Backend** — new NestJS modules alongside the existing `auth`/`users`:
-- `common/guards/roles.guard.ts` + `@Roles()` decorator — shared, reads `role` from the JWT payload, locks admin-only endpoints.
-- `classes/` module — Class CRUD, nested Section CRUD, subject-to-class assignment.
-- `subjects/` module — global subject catalog CRUD.
-- `timetable/` module — weekly timetable entries per section, conflict validation, plus `GET /timetable/me` for teachers/students.
+**Backend** — new `attendance` NestJS module alongside `classes`/`timetable`/`subjects`:
+- `POST/PUT /attendance/sections/:sectionId/days/:date` — the section's class teacher submits or edits attendance. Guarded: caller must equal `section.classTeacherId`, and `date` must be today's server date (no backfilling past/future days).
+- `PATCH /attendance/sections/:sectionId/days/:date` — admin-only edit of any day's attendance. Each changed student status writes an `AttendanceEdit` audit row (old → new, who, when). No reason/comment required.
+- `GET /attendance/sections/:sectionId/days/:date` — fetch one day's session (entries + edit log). Accessible to the section's class teacher (own section) and admin (any section).
+- `GET /attendance/me?month=YYYY-MM` — the logged-in student's own attendance for a month.
+- `GET /attendance/reports/daily?date=` — present/absent/leave counts per section for a date.
+- `GET /attendance/reports/monthly?sectionId=&month=` — present/absent/leave/markedDays/percentage per student in a section for a month.
 
-**Frontend** — rewire existing mock pages to call real APIs instead of local state:
-- `ClassesPage.tsx` → real class/section/subject data.
-- `TimetablePage.tsx` → admin timetable builder, real data.
-- `MyTimetablePage.tsx` → teacher/student read-only view, real data.
-- `frontend/src/lib/http.ts` currently only has `get`/`post` — needs `put`/`patch`/`delete` added.
+**Key design decision:** rather than a scheduled midnight job to "lock" attendance, locking is computed at request time: a session is locked simply if its `date` isn't today. This gives identical user-facing behavior (teacher can edit same-day, locked after) without a background job that could fail silently — removing that risk entirely. Admin edits always go through the audited `PATCH`, regardless of lock state.
 
-**Flow:** React SPA → `/api/...` (Vite proxy in dev) → NestJS controllers → Prisma → Postgres. All writes go through `JwtAuthGuard` + `RolesGuard` (admin-only); reads are open to any authenticated role, scoped to the caller for "my timetable".
+**Frontend** — rewire the three existing mock pages (already fully built against local mock state in a prior pass) to real API calls:
+- `MarkAttendancePage.tsx` (teacher) → real submit/edit for today's attendance. Also gets a small behavior fix: the current mock locks immediately on submit with no way back in — it needs a re-edit affordance for the same day, to match "teacher can edit before lock."
+- `AttendancePage.tsx` (admin) → real browse/edit for any section/day, real daily summary table, real monthly % table.
+- `MyAttendancePage.tsx` (student) → real monthly attendance + stats for the logged-in student. The parent branch stays an unwired placeholder (parent access is out of scope for v1 — see `docs/brainstorm.md`).
+- `frontend/src/lib/http.ts` already has `get`/`post`/`patch`/`put`/`delete` — no changes needed there.
+
+**Flow:** React SPA → `/api/...` (Vite proxy in dev) → NestJS controllers → Prisma → Postgres. All writes go through `JwtAuthGuard` + section/role checks; reads are scoped to the caller (teacher → own section, student → own records, admin → everything).
 
 ```mermaid
 flowchart LR
     subgraph Frontend [React SPA]
-        CP[ClassesPage]
-        TP[TimetablePage - admin builder]
-        MP[MyTimetablePage - read-only]
+        MA[MarkAttendancePage - teacher]
+        AP[AttendancePage - admin]
+        MY[MyAttendancePage - student]
     end
 
     subgraph Backend [NestJS - /api]
         G[JwtAuthGuard + RolesGuard]
-        CM[classes module]
-        SM[subjects module]
-        TM[timetable module]
+        AM[attendance module]
     end
 
     DB[(Postgres via Prisma)]
 
-    CP --> G
-    TP --> G
-    MP --> G
-    G --> CM
-    G --> SM
-    G --> TM
-    CM --> DB
-    SM --> DB
-    TM --> DB
+    MA --> G
+    AP --> G
+    MY --> G
+    G --> AM
+    AM --> DB
 ```
 
 ## Data model
 
 ```prisma
-model Class {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  sections      Section[]
-  classSubjects ClassSubject[]
+enum AttendanceStatus {
+  present
+  absent
+  leave
 }
 
-model Section {
-  id             String   @id @default(cuid())
-  name           String
-  classId        String
-  class          Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
-  classTeacherId String?
-  classTeacher   User?    @relation("SectionClassTeacher", fields: [classTeacherId], references: [id])
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+model AttendanceSession {
+  id            String           @id @default(cuid())
+  sectionId     String
+  section       Section          @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  date          DateTime         @db.Date
+  submittedById String
+  submittedBy   User             @relation("AttendanceSubmitter", fields: [submittedById], references: [id])
+  submittedAt   DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
 
-  students         User[]           @relation("StudentSection")
-  timetableEntries TimetableEntry[]
+  entries AttendanceEntry[]
+  edits   AttendanceEdit[]
 
-  @@unique([classId, name])
+  @@unique([sectionId, date])
 }
 
-model Subject {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  createdAt DateTime @default(now())
+model AttendanceEntry {
+  id        String            @id @default(cuid())
+  sessionId String
+  session   AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  studentId String
+  student   User              @relation("StudentAttendance", fields: [studentId], references: [id], onDelete: Cascade)
+  status    AttendanceStatus
 
-  classSubjects ClassSubject[]
+  @@unique([sessionId, studentId])
 }
 
-model ClassSubject {
-  id        String   @id @default(cuid())
-  classId   String
-  class     Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
-  subjectId String
-  subject   Subject  @relation(fields: [subjectId], references: [id])
-  teacherId String?
-  teacher   User?    @relation("SubjectTeacher", fields: [teacherId], references: [id])
-
-  @@unique([classId, subjectId])
-}
-
-model Period {
-  id        String  @id @default(cuid())
-  order     Int     @unique
-  startTime String
-  endTime   String
-  isBreak   Boolean @default(false)
-  label     String?
-
-  timetableEntries TimetableEntry[]
-}
-
-enum DayOfWeek {
-  mon
-  tue
-  wed
-  thu
-  fri
-}
-
-model TimetableEntry {
-  id        String    @id @default(cuid())
-  sectionId String
-  section   Section   @relation(fields: [sectionId], references: [id], onDelete: Cascade)
-  periodId  String
-  period    Period    @relation(fields: [periodId], references: [id])
-  dayOfWeek DayOfWeek
-  subjectId String
-  subject   Subject   @relation(fields: [subjectId], references: [id])
-  teacherId String
-  teacher   User      @relation("EntryTeacher", fields: [teacherId], references: [id])
-
-  @@unique([sectionId, periodId, dayOfWeek])
-  @@unique([teacherId, periodId, dayOfWeek])
+model AttendanceEdit {
+  id         String            @id @default(cuid())
+  sessionId  String
+  session    AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  studentId  String
+  student    User              @relation("AttendanceEditedStudent", fields: [studentId], references: [id])
+  fromStatus AttendanceStatus
+  toStatus   AttendanceStatus
+  editedById String
+  editedBy   User              @relation("AttendanceEditedBy", fields: [editedById], references: [id])
+  editedAt   DateTime          @default(now())
 }
 ```
 
-`User` gets one addition: a nullable `sectionId` (+ relation `"StudentSection"`) so a student account can be linked to the section they belong to. This isn't full roster/enrollment management (that stays out of scope) — it's the minimal field needed for "students view their timetable" to work. Admin sets it from the Sections screen.
-
-`Period` is seeded once via a migration seed script (fixed 8:00 AM–1:00 PM schedule, periods + breaks) — not user-editable in v1.
+One `AttendanceSession` per section+day (matches "locked after submission" being a whole-day concept), with one `AttendanceEntry` row per enrolled student — mirrors the existing frontend mock's `AttendanceRecord`/`entries` shape closely, minimizing rework. "Locked" isn't a stored column — it's `session.date !== today`, computed at request time. No changes needed to `Section` or `User` — `classTeacherId` and `sectionId` already exist and do the job.
 
 ## Milestones
 
-**M1 — Foundation + Class management**
-- Add `RolesGuard` + `@Roles()` decorator (backend)
-- `Class` model + CRUD API
-- Rewire `ClassesPage` class list (create/rename/delete) to real data
-- Test: log in as admin, create/edit/delete a class, refresh — it persists. Log in as teacher/student, confirm write attempts are blocked.
+**M1 — Mark & same-day edit (teacher flow)**
+- `AttendanceSession` + `AttendanceEntry` models + migration
+- `POST/PUT` + `GET` endpoints for a section+day, guarded to the section's class teacher, today-only
+- Rewire `MarkAttendancePage` to real data, with re-edit enabled until midnight
+- Test: log in as a section's class teacher, submit attendance, edit it again same day, see it persist. Log in as a different teacher, confirm blocked from that section.
 
-**M2 — Sections + Subjects**
-- `Section`, `Subject`, `ClassSubject` models + CRUD APIs
-- Full `ClassesPage` wired: sections within a class, subject catalog, one-teacher-per-subject assignment
-- Add `sectionId` to `User`, simple admin UI to assign a student to a section
-- Test: create sections under a class, assign subjects + teachers, assign a student user to a section.
+**M2 — Admin browse & edit + audit log**
+- `AttendanceEdit` model
+- Admin-only `PATCH` endpoint with audit logging; `GET` usable by admin for any section/day
+- Rewire `AttendancePage`'s "Browse & edit" section to real data
+- Test: log in as admin, open a past (locked) day, change a student's status, see the edit log entry with old → new value.
 
-**M3 — Timetable builder**
-- `Period` model + seed data (8:00–1:00, fixed)
-- `TimetableEntry` model + CRUD API with conflict validation (clear error message backed by the DB unique constraint)
-- Rewire `TimetablePage` (admin builder) to real data
-- Test: build a weekly timetable for a section, try to double-book a teacher across two sections at the same slot, see it rejected.
+**M3 — Reports**
+- `GET /attendance/reports/daily` and `GET /attendance/reports/monthly` endpoints
+- Rewire `AttendancePage`'s daily summary and monthly % tables to real data
+- Test: log in as admin, view daily summary across sections and monthly % per student.
 
-**M4 — Read-only views**
-- `GET /timetable/me` endpoint
-- Rewire `MyTimetablePage` for teachers (their taught slots) and students (their section's timetable)
-- Test: log in as a teacher and a student, each sees only their own schedule, no edit controls visible.
+**M4 — Student view**
+- `GET /attendance/me` endpoint
+- Rewire `MyAttendancePage` for the student role to real data (parent branch stays an unwired placeholder)
+- Test: log in as a student, see own attendance history and monthly %; confirm another student's data isn't visible.
 
 ## Technical risks
 
 | Risk | Mitigation |
 |---|---|
-| No `RolesGuard` exists today — admin-only enforcement is currently frontend-only | Build and test the guard in M1 before any other write endpoint ships |
-| Teacher double-booking conflict logic | Enforced at two levels: DB unique constraint (`teacherId` + `periodId` + `dayOfWeek`) as the source of truth, plus a service-layer check for a clear user-facing error message |
-| Linking students to sections isn't in the original brainstorm scope | Scoped to the minimum: one nullable `sectionId` field on `User`, set by admin from the Sections screen — no roster/enrollment workflow built |
-| Rewiring mock frontend pages while also improving UI/flow | Each milestone rewires one page at a time against real data, so regressions are caught incrementally rather than in one large rewrite |
+| Computing "locked" from a date comparison needs the right calendar-day semantics | Compare `session.date` to the server's current local date (consistent with existing date-string patterns elsewhere in the app); single-school/single-timezone deployment, so no timezone-conversion complexity needed |
+| Class-teacher guard must reject other teachers (e.g. subject teachers for that section) | `Section.classTeacherId` already exists and is distinct from `ClassSubject.teacherId`; guard compares `section.classTeacherId === req.user.id` |
+| Existing mock `MarkAttendancePage` locks immediately with no re-edit option, which contradicts the confirmed "teacher can edit until midnight" behavior | M1 includes a UI fix (re-edit affordance), not just data-wiring |
+| Parent role has no student link (deferred per brainstorm) | `MyAttendancePage`'s parent branch stays a non-wired placeholder for v1; revisit once a parent–student relationship is built |
+| All-students-required submission could reject legitimate partial saves | Frontend already defaults every roster student to "present" before submit, so every submission is complete by construction; backend validates the full roster is covered |
 
 ## Decisions log
 
 | Decision | Reason |
 |---|---|
-| Reuse existing NestJS/Prisma/React stack, no new libraries | Fixed periods + Mon–Fri schedule don't need a scheduling library; staying consistent with the existing codebase |
-| One teacher per subject per class (not multiple) | Confirmed with user during brainstorm |
-| Fixed, school-wide periods (not per-class configurable) | Confirmed with user during brainstorm; simplifies `Period` to one seeded table |
-| School day is 8:00 AM–1:00 PM, Monday–Friday | Confirmed with user during brainstorm |
-| Period seed: 6 × 45-min periods + one 30-min Recess (10:15–10:45) | Confirmed with user during /use-cases; resolves the brainstorm's open question |
-| Conflict detection is automatic, not just advisory | Confirmed with user during brainstorm; implemented via DB unique constraint |
-| Add nullable `User.sectionId` for students | Necessary gap found during planning — without it, students have no way to be linked to a timetable |
-| Single school, no multi-tenant data model | Confirmed with user during brainstorm |
-| Rework mock UI/flow, not just reskin | Confirmed with user during brainstorm |
+| Reuse existing NestJS/Prisma/React stack, no new libraries | Consistent with the existing codebase; no new technical surface needed |
+| No scheduled/cron job for midnight lock — "locked" computed from date comparison instead | Simpler, removes a background-job failure risk, behaviorally identical to an auto-lock |
+| One `AttendanceSession` per section+day with child `AttendanceEntry` rows, not one row per student | Matches "locked after submission" as a whole-day concept and mirrors the existing frontend mock's data shape |
+| Teacher same-day edits are not logged; only Admin edits to a locked/past day are logged | Confirmed during brainstorm |
+| No reason/comment required on Admin edits | Confirmed during brainstorm |
+| `MarkAttendancePage` gets a small behavior change (re-edit before midnight), beyond pure data-wiring | Necessary gap found during planning — the existing mock's "lock immediately" behavior contradicted the agreed product behavior |
+| Parent view/access and academic calendar/holidays are out of scope for v1 | Confirmed during brainstorm |
+| Reuse `Section.classTeacherId` and `User.sectionId` as-is | Both already exist from the Academic Management feature and fully cover this feature's needs |

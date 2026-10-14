@@ -30,11 +30,13 @@ model User {
   sectionId    String?
   section      Section? @relation("StudentSection", fields: [sectionId], references: [id], onDelete: SetNull)
 
-  refreshTokens        RefreshToken[]
-  passwordResets       PasswordResetToken[]
-  classTeacherSections Section[]            @relation("SectionClassTeacher")
-  taughtClassSubjects  ClassSubject[]       @relation("SubjectTeacher")
-  timetableEntries     TimetableEntry[]     @relation("EntryTeacher")
+  refreshTokens         RefreshToken[]
+  passwordResets        PasswordResetToken[]
+  classTeacherSections  Section[]            @relation("SectionClassTeacher")
+  taughtClassSubjects   ClassSubject[]       @relation("SubjectTeacher")
+  timetableEntries      TimetableEntry[]     @relation("EntryTeacher")
+  attendanceSubmissions AttendanceSession[]  @relation("AttendanceSubmitter")
+  attendanceEntries     AttendanceEntry[]    @relation("StudentAttendance")
 
   @@index([sectionId])
 }
@@ -85,7 +87,8 @@ model Section {
   updatedAt      DateTime @updatedAt
   students       User[]   @relation("StudentSection")
 
-  timetableEntries TimetableEntry[]
+  timetableEntries   TimetableEntry[]
+  attendanceSessions AttendanceSession[]
 
   @@unique([classId, name])
   @@index([classTeacherId])
@@ -150,4 +153,39 @@ model TimetableEntry {
   @@index([periodId])
   @@index([subjectId])
   @@index([teacherId])
+}
+
+enum AttendanceStatus {
+  present
+  absent
+  leave
+}
+
+// One session per section+day; AttendanceEdit (admin audit log) arrives in T-034.
+model AttendanceSession {
+  id            String   @id @default(cuid())
+  sectionId     String
+  section       Section  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  date          DateTime @db.Date
+  submittedById String
+  submittedBy   User     @relation("AttendanceSubmitter", fields: [submittedById], references: [id])
+  submittedAt   DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  entries AttendanceEntry[]
+
+  @@unique([sectionId, date])
+  @@index([submittedById])
+}
+
+model AttendanceEntry {
+  id        String            @id @default(cuid())
+  sessionId String
+  session   AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  studentId String
+  student   User              @relation("StudentAttendance", fields: [studentId], references: [id], onDelete: Cascade)
+  status    AttendanceStatus
+
+  @@unique([sessionId, studentId])
+  @@index([studentId])
 }

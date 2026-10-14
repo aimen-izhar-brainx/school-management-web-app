@@ -1,57 +1,54 @@
-# Brainstorm: Academic Management
+# Brainstorm: Attendance Management
 
 ## Problem
 
-Classes, sections, subjects, and timetables are currently managed manually (Excel/paper). This is error-prone and there is no system of record for this data in the app today.
+Attendance is currently tracked on paper. This means:
+- Parents don't find out when their child is absent.
+- Admin cannot produce attendance reports (e.g. for inspections or decisions).
+- No historical record exists for students.
 
 ## Users
 
-- **Admin** — full CRUD on classes, sections, subjects, and the timetable. Only role that can create or edit anything in this feature.
-- **Teachers** — read-only access to their own timetable.
-- **Students** — read-only access to their own class/section timetable.
-
-No other role can make changes.
+- **Teacher** — exactly one designated "class teacher" per Section marks daily attendance for their own section only (not any teacher who teaches a period there).
+- **Student** — views their own attendance record only.
+- **Admin** — views all attendance (filterable by date/class), and is the only role that can edit attendance after it is locked.
+- **Parent** — out of scope for v1 (see below).
 
 ## MVP features
 
-- **Class management** — Create/Edit/Delete classes (e.g., "Grade 1", "Grade 10").
-- **Section management** — Create/Edit/Delete sections within a class (e.g., Section A, B, C).
-- **Subject management**:
-  - Create subjects
-  - Assign subjects to classes
-  - Assign exactly one teacher per subject (per class/section)
-- **Timetable builder**:
-  - Weekly timetable per class/section, Monday–Friday
-  - School day runs 8:00 AM–1:00 PM; periods are fixed/school-wide (exact number and duration of periods to be finalized during `/plan`)
-  - Admin assigns subject + teacher to a day/time slot
-  - Automatic conflict detection — blocks assigning a teacher to two classes/sections at the same day/time slot
-- **Read-only views** — Teachers and students can view their respective timetables; no edit access.
-- Single school only (no multi-tenant data model needed).
-- Rework the existing mock-only frontend pages (`ClassesPage.tsx`, `TimetablePage.tsx`, `MyTimetablePage.tsx`) into real, backend-wired pages. UI/flow can be improved where it clearly helps, not just reskinned.
+1. Class teacher marks each student in their section as Present / Absent / Leave, once per day (not per subject/period).
+2. Teacher can edit their section's attendance for the current day up until midnight.
+3. Attendance auto-locks at midnight. After lock, only Admin can edit it.
+4. Admin edits to locked attendance are logged (who changed it, when, old value → new value). No reason/comment is required.
+5. Student can view their own daily attendance history.
+6. Admin can view attendance across all classes/sections, filterable by date and class.
+7. Basic reports, on-screen only (no export in v1):
+   - Daily attendance summary per class.
+   - Monthly attendance percentage per student.
 
 ## Out of scope (v1)
 
-- AI/auto-generated timetable suggestions
-- Academic year/term/semester management (one active timetable per class/section, no history across terms)
-- Notifications/alerts when the timetable changes
-- Teacher substitution/leave handling
-- Bulk import (CSV) of classes/subjects
-- Audit log/history of timetable changes
+- Parent view/access to attendance.
+- Parent–student linking (no such relationship exists in the data model yet).
+- Academic calendar / holiday model — every weekday is treated as a potential school day; no enforcement preventing attendance on non-school days.
+- Exportable reports (CSV/PDF).
+- Per-period/subject-level attendance.
+- Leave-request/approval workflow — "Leave" is just a status a teacher can pick, not a request-approval flow.
+- Requiring a reason/comment on admin edits to locked attendance.
 
 ## Risks and challenges
 
 | Risk | Impact | Idea to reduce it |
 |---|---|---|
-| No backend data models exist yet (`Class`, `Section`, `Subject`, `Timetable`) — this is a full buildout, not a thin slice | Medium-high implementation effort | Plan the data model carefully up front; deliver in phased tickets |
-| No `RolesGuard` enforcing admin-only writes server-side today (role check currently lives only on the frontend) | Security gap — a teacher/student could call write APIs directly today | Build a proper backend `RolesGuard`/decorator as part of this feature |
-| Conflict-detection logic (checking teacher availability across all classes/sections on every write) | Adds query/validation complexity | Validate at the service layer; index by teacher + day + time slot |
-| Rewiring existing mock frontend pages to real APIs while also improving UI/flow | Risk of scope creep beyond a straightforward CRUD build | Keep redesign targeted to specific usability gaps, not a full overhaul |
-| Timeline | Flexible — low risk | — |
+| Midnight auto-lock requires a scheduled job — a new pattern for this codebase | Low-medium: if the job fails silently, attendance never locks | Use NestJS's `@nestjs/schedule`, add a test and basic monitoring/logging for the job |
+| No holiday model — teachers could mark attendance on non-school days | Low: data-quality only, not a functional blocker | Admin can simply disregard those days for now; revisit if it becomes a real problem |
+| Future parent feature will need retrofitting a parent–student link | Medium: some rework later when parent access is built | Key the Attendance model off `userId` (student), so adding parent view later is additive, not a rewrite |
+| Section-based attendance (not Class-based) | Low — schema already has `classTeacherId` on `Section` and students link to `Section` | None needed; confirmed to fit existing schema |
 
 ## Open questions
 
-- Exact number and duration of periods within the 8:00 AM–1:00 PM school day (to be finalized in `/plan`).
+- None outstanding — all key decisions were confirmed during brainstorming.
 
 ## Doability verdict
 
-**Go with changes.** Technically straightforward (standard CRUD + scheduling conflict checks), but it is a genuine full-stack build: new Prisma models, new NestJS modules, backend role enforcement that doesn't exist yet, and rewired/redesigned frontend pages. Recommend careful data-model planning before coding begins.
+**Go.** The existing schema already has `Section`, `classTeacherId`, and student–section links, so this feature fits cleanly without requiring prerequisite data-model work, once Parent access and the holiday model are deferred to a future version.

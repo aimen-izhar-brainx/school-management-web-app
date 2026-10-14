@@ -1,11 +1,11 @@
 ---
-diff_hash: ea854de815f4395a5ec91ad3d311900289833003af7ee75407b4a003e44a54fb
-reviewed_at: 2026-10-13T12:46:17Z
+diff_hash: 58891511a06a129e6ad060f5c781dd6048a0558c91cf3a23e32642de01698ce2
+reviewed_at: 2026-10-14T07:53:03Z
 ---
 
 ## Summary
 
-T-031: blocks the Parent role from Academic Management. `GET /timetable/me` now requires `@Roles('teacher','student')` via `RolesGuard`; the service's admin/parent "none" branch was removed. `MyTimetablePage` renders "Not available for your role." for parents without fetching. Adds a real-DB spec (`parent-access.spec.ts`) covering 403 on all write endpoints, 403 on `/timetable/me`, and 401 for missing/expired tokens, plus parent cases in the frontend tests. Stack: NestJS (backend) + React (frontend). The diff touches no API contract that the frontend consumes differently; the frontend no longer receives `kind: 'none'`, and nothing in `frontend/src` references it.
+Adds the attendance backend (NestJS + Prisma): `AttendanceSession`/`AttendanceEntry` models and migration, and `PUT/GET /attendance/sections/:sectionId/days/:date`, restricted to the section's class teacher (teacher role + ownership check). Submissions are limited to today's date and must cover the section roster exactly. Four real-DB specs are included. The rest of the diff is docs and tickets (T-032..T-039), plus a regenerated tsbuildinfo. Stack: NestJS (backend only; no frontend change, so no cross-repo contract issue).
 
 ## Findings
 
@@ -13,28 +13,37 @@ T-031: blocks the Parent role from Academic Management. `GET /timetable/me` now 
 
 ### High (0)
 
-### Medium (0)
-
-### Low (2)
-- **backend/src/timetable/timetable-me.service.ts:17** — `getMine` now treats every non-teacher role as a student (`role === 'teacher' ? forTeacher : forStudent`). Access control rests entirely on the controller's `@Roles('teacher','student')`; if that decorator is ever removed or the guard is not applied, an admin/parent would silently get the student branch (an empty "no section" payload) instead of a failure. *(maintainability)*
+### Medium (2)
+- **backend/src/attendance/attendance.service.ts:100** — `assertRosterCovered` compares Sets, so duplicate `studentId`s in `entries` pass the roster check. `createMany` then violates the `(sessionId, studentId)` unique index and the request fails as a 500 instead of a 400. The transaction rolls back, but the client gets an unhelpful error. Reject duplicates explicitly (e.g. compare `entries.length` to the Set size and report the duplicate ids). *(correctness)*
   - status: open
   - dev_reasoning: N/A
-  - ai_reasoning: Not exploitable today, since the guard is in place and tested. Consider an explicit `role === 'student'` check with a `ForbiddenException` fallback for defense in depth.
-- **backend/tsconfig.build.tsbuildinfo:1** — A generated build-cache file is tracked in git and modified in this diff, which adds noise and merge conflicts. *(maintainability)*
-  - status: ignored
-  - dev_reasoning: Pre-existing tracked file that the hook's `git add -A` stages on every commit. Untracking it and editing .gitignore is a repo-hygiene change outside this ticket's scope, left for the repo owner (same as every earlier commit on this branch).
-  - ai_reasoning: Build artifacts shouldn't be committed. Add `*.tsbuildinfo` to `.gitignore` and `git rm --cached` the file, or unstage this change.
+  - ai_reasoning: Input such as `[{studentId:A,status:present},{studentId:A,status:absent}]` for a one-student roster passes validation and ends in an unhandled Prisma P2002 error.
+- **backend/src/attendance/attendance.service.ts:136** — "Today" is computed as the UTC date (`new Date().toISOString().slice(0, 10)`). For a school in a non-UTC timezone, teachers submitting near local midnight (or early morning in a timezone ahead of UTC) get "locked" errors for what is locally today, or can submit for the wrong day. Use a configured school timezone (via config) to derive today's date. *(correctness)*
+  - status: open
+  - dev_reasoning: N/A
+  - ai_reasoning: The date is the core of the edit-lock rule (`locked` and `assertIsToday`), so the offset directly affects who can submit when.
+
+### Low (2)
+- **backend/src/attendance/attendance.service.ts:25** — The roster check (`assertRosterCovered`) runs outside the transaction that deletes and recreates entries. A student moved into or out of the section between the check and the write can leave an entry that no longer matches the roster. The window is small and the effect is minor, but running the check inside the transaction would close it. *(correctness)*
+  - status: open
+  - dev_reasoning: N/A
+  - ai_reasoning: Low impact; the FK on `studentId` still prevents invalid users, and only section membership can drift.
+- **backend/src/attendance/attendance.controller.ts:25** — Controller reads the user via `@Req() req: Request & { user: JwtPayload }` in both handlers, repeating the type. A small `@CurrentUser()` decorator would remove the duplication. No such decorator exists in the project yet, so this is optional. *(maintainability)*
+  - status: skipped
+  - dev_reasoning: cosmetic only; introducing a new @CurrentUser() decorator pattern is out of scope for this ticket and not used elsewhere in the project yet.
+  - ai_reasoning: Consistent with how other controllers may do it, so this is purely a cleanup suggestion.
 
 ## Reviewed files
-- .code-reviews/brainx-review.md (deleted prior review)
-- backend/src/common/parent-access.spec.ts
-- backend/src/timetable/timetable-me.controller.ts
-- backend/src/timetable/timetable-me.service.ts
-- backend/tsconfig.build.tsbuildinfo (generated; skimmed)
-- docs/use-cases.md
-- frontend/src/components/ClassesPage.test.tsx
-- frontend/src/components/MyTimetablePage.test.tsx
-- frontend/src/components/MyTimetablePage.tsx
-- frontend/src/components/TimetablePage.test.tsx
-- tickets/STATUS.md
-- tickets/T-031.md
+- backend/prisma/migrations/20261014090000_add_attendance/migration.sql
+- backend/prisma/schema.prisma
+- backend/src/app.module.ts
+- backend/src/attendance/attendance.controller.ts
+- backend/src/attendance/attendance.module.ts
+- backend/src/attendance/attendance.service.ts
+- backend/src/attendance/dto/submit-attendance.dto.ts
+- backend/src/attendance/attendance-access.spec.ts (skimmed)
+- backend/src/attendance/attendance-date.spec.ts (skimmed)
+- backend/src/attendance/attendance-edit.spec.ts (skimmed)
+- backend/src/attendance/attendance-submit.spec.ts (skimmed)
+- backend/tsconfig.build.tsbuildinfo (skipped, generated)
+- docs/brainstorm.md, docs/plan.md, docs/use-cases.md, tickets/STATUS.md, tickets/T-032.md .. T-039.md (docs only)
