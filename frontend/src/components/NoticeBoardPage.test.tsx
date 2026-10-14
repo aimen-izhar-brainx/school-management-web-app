@@ -4,6 +4,11 @@ import '@testing-library/jest-dom'
 import { NoticeBoardPage } from './NoticeBoardPage'
 import type { AuthUser } from '../lib/auth'
 
+vi.mock('../lib/http', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/http')>()
+  return { ...actual, api: { get: vi.fn(() => new Promise(() => {})), post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn() } }
+})
+
 // Tests for T-004: migrate NoticeBoardPage's own header/main markup to the
 // shared DashboardShell (T-002), with no visible or behavioral change.
 //

@@ -1,11 +1,11 @@
-# Release Report: Academic Management — M1 + M2
+# Release Report: Academic Management — M1 to M4
 
-- **Milestones covered:** M1 (Foundation + Class management) and M2 (Sections + Subjects)
+- **Milestones covered:** M1 (Classes), M2 (Sections + Subjects), M3 (Timetable builder), M4 (Read-only views)
 - **Date:** 2026-10-13
 - **Branch:** `academic-management` (local commits, not pushed)
 - **Status:** Waiting for your approval. Nothing here is approved until you approve it.
 
-M3 (Timetable builder) is partly built and M4 is not started. Both are listed at the end for context only and are **not** part of this approval.
+This replaces the earlier M1 + M2 report. All 20 tickets are DONE.
 
 ---
 
@@ -25,6 +25,14 @@ M3 (Timetable builder) is partly built and M4 is not started. Both are listed at
 | T-027 | Subject rename + delete UI | DONE | 1 | |
 | T-028 | Delete class with sections/subjects/students (backend) | DONE | 1 | |
 | T-029 | Delete class confirmation with counts | DONE | 1 | |
+| T-020 | Fixed period schedule + GET /periods | DONE | 1 | Seeded by migration; drift-guard test against `FIXED_PERIODS` |
+| T-021 | Timetable read API | DONE | 1 | |
+| T-022 | Place/clear entries + teacher conflict rule | DONE | 1 | Unique DB constraint on teacher/period/day; retry on same-slot race |
+| T-023 | Wire TimetablePage admin builder | DONE | 3 | You chose "always redirect" for non-admins (AC-17.2); view resets to Home on sign-in/out |
+| T-030 | Backend rejects invalid timetable entries | DONE | 1 | Row lock stops entries for a subject just removed from the class |
+| T-024 | GET /timetable/me | DONE | 1 | |
+| T-025 | Wire MyTimetablePage | DONE | 1 | |
+| T-031 | Block Parent role | DONE | 1 | You chose to keep no parent button; the message page is a safety net |
 
 Each ticket went through: test-writer → implementer → reviewer → verifier → the repo's pre-commit AI review.
 
@@ -48,10 +56,22 @@ Each ticket went through: test-writer → implementer → reviewer → verifier 
 | UC-10 | Subject + teacher on a class | 4 / 4 | 2 / 2 | PASS (UC-10-E2 verified in T-021) |
 | UC-11 | Admin assigns a student to a section | 3 / 3 | 2 / 2 | PASS |
 | UC-12 | Role enforcement (M2) | 2 / 2 | 1 / 1 | PASS |
-| UC-22 | Rename or delete a subject | 5 / 6 + 1 partial | 3 / 3 | PARTIAL: AC-22.1's "timetable cell shows the new name" part is in T-023 (M3, not yet verified). Catalog and class lists are verified. |
-| UC-23 | Delete a class with dependents | 4 / 5 + 1 partial | 2 / 2 | PARTIAL: AC-23.3's "student sees the UC-20 message on My Timetable" part is in T-024/T-025 (M4). Students staying with no section is verified. |
+| UC-22 | Rename or delete a subject | 6 / 6 | 3 / 3 | PASS (timetable-cell rename verified in T-023) |
+| UC-23 | Delete a class with dependents | 5 / 5 | 2 / 2 | PASS (My Timetable message verified in T-024/T-025) |
 
-**Totals for M1 + M2:** 48 of 50 criteria fully passed, with 2 partly passed (their remaining parts are scheduled in M3/M4), and 31 of 31 edge cases passed.
+| UC-13 | Admin places a subject in a slot | 4 / 4 | 2 / 2 | PASS |
+| UC-14 | No teacher double-booking | 3 / 3 | 2 / 2 | PASS (also under concurrent saves) |
+| UC-15 | Admin clears a slot | 2 / 2 | 1 / 1 | PASS |
+| UC-16 | Admin views a section's grid | 3 / 3 | 1 / 1 | PASS |
+| UC-17 | Role enforcement (M3) | 2 / 2 | 1 / 1 | PASS |
+| UC-24 | Backend rejects invalid entries | 5 / 5 | 2 / 2 | PASS |
+| UC-18 | Teacher views own timetable | 3 / 3 | 1 / 1 | PASS |
+| UC-19 | Student views own section's timetable | 3 / 3 | 1 / 1 | PASS |
+| UC-20 | Student with no section | 1 / 1 | 1 / 1 | PASS |
+| UC-21 | Read access scoped to the caller | 3 / 3 | 1 / 1 | PASS |
+| UC-25 | Parent blocked | 3 / 3 | 1 / 1 | PASS |
+
+**Totals:** 82 of 82 criteria and 45 of 45 edge cases passed. The earlier partial items (AC-22.1 timetable cells, AC-23.3 My Timetable message) are now complete.
 
 ---
 
@@ -61,36 +81,34 @@ Run on 2026-10-13 on the current working tree.
 
 | Suite | Files | Tests | Passed | Failed |
 |---|---|---|---|---|
-| Backend (`cd backend && npm run test`) | 15 | 280 | 280 | 0 |
-| Frontend (`cd frontend && npm run test`) | 21 | 200 | 200 | 0 |
-| **Total** | 36 | 480 | 480 | 0 |
+| Backend (`cd backend && npm run test`) | 18 | 318 | 318 | 0 |
+| Frontend (`cd frontend && npm run test`) | 20 | 234 | 234 | 0 |
+| **Total** | 38 | 552 | 552 | 0 |
 
-Notes:
-- These counts include M3 work. The backend suite has the committed M3 tickets T-020, T-021, T-022 and T-030, and the frontend suite has uncommitted T-023 work (the timetable builder page; not reviewed yet). At the last M2 commit (T-029), the frontend had 185 tests, all passing.
-- Backend tests run against the real local Postgres database with real JWTs and guards. Frontend tests mock the HTTP layer, so the end-to-end flow in a browser is only checked by your manual test below.
+- Backend tests use the real local Postgres, real JWTs and guards. Frontend tests mock the HTTP layer, so your manual test below is the only browser-level check.
 - Lint is clean on both. `tsc` on the backend shows one known error from before this feature (`test/app.e2e-spec.ts` can't find `supertest/types`).
 
 ---
 
 ## 4. BLOCKED tickets and open questions
 
-There are no blocked tickets.
-
-The one question raised during the build was AC-05.3 (whether to hide the section/subject counts in the M1 class list). You answered it, chose to hide them, and T-014 was finished on that basis.
+There are no blocked tickets. Questions raised during the build and answered by you: AC-05.3 (hide counts in M1), AC-17.2 (always redirect non-admins), AC-25.3 (no parent button to My Timetable).
 
 ---
 
 ## 5. Known limits and risks
 
-1. **No paging or search in the teacher and student pickers.** `GET /users?role=…` returns every teacher or student. This is fine for one school, but it gets slow with thousands of students. It follows your earlier choice to leave out student-picker search.
-2. **Names are case-insensitive.** "Grade 5" and "grade 5" count as the same class. Section names are unique within a class, and subject names across the catalog. This is enforced in the database with `citext`.
-3. **The class teacher is shown for display only.** It doesn't affect the timetable, as the use cases specify.
-4. **Removing a subject from a class has no confirmation prompt.** It only removes the link; the subject stays in the catalog.
-5. **The manual check is the only end-to-end check.** There are no browser tests.
-6. **Not merged or pushed.** All commits are local on `academic-management`.
-7. **Build cache file in git.** `backend/tsconfig.build.tsbuildinfo` is tracked, and the pre-commit hook keeps committing it. Untracking it is your decision.
-8. **Unreviewed T-023 code in the working tree.** The admin Timetable page you'll see while testing is in progress. Please don't judge it as part of this release.
-9. **Teachers and students can't reach the Classes page.** Non-admins only get "My Timetable" from their home screen. The backend rejects their write attempts (tested), but there's no read-only Classes view for them, and none was asked for.
+1. **No paging or search in the teacher and student pickers.** `GET /users?role=…` returns everyone of that role.
+2. **Names are case-insensitive** (class, section within a class, subject), enforced with `citext`.
+3. **The class teacher is display only.** It doesn't affect the timetable.
+4. **Removing a subject from a class has no confirmation prompt.** It only removes the link.
+5. **The timetable page fetches each section separately** (extra requests with many sections). Deferred.
+6. **Parents have no entry to My Timetable.** If they land there, they see "Not available for your role." Admins also get a 403 on `GET /timetable/me`.
+7. **Non-admins can't see the Classes page.** They only get My Timetable.
+8. **No browser tests.**
+9. **Not merged or pushed.** All commits are local.
+10. **Build cache file in git.** `backend/tsconfig.build.tsbuildinfo` is tracked and the pre-commit hook keeps committing it. Untracking it is your decision.
+11. **Pre-commit review scores.** Some commits scored 98 or 99 ("fail") because deferred or ignored findings with a recorded reason still count. Every commit went through.
 
 ---
 
@@ -159,9 +177,31 @@ Test accounts:
 4. Click **Delete class** again and confirm. The class disappears.
 5. Create a new empty class and delete it. You get the plain "Delete this class? This cannot be undone." prompt.
 
-### F. Roles
+### F. Timetable builder (M3): log in as Admin, open **Timetable**
 
-1. Log in as **Teacher**, then **Student**, then **Parent**. None of their home screens offer Classes or the admin Timetable builder. Only admins can change classes, sections or subjects.
+Set up first: in **Classes**, create **Grade 8** with section **A**. Add subjects **Math** (teacher: Test Teacher) and **English** (teacher: Test Teacher) to Grade 8. Assign **Test Student** to section A.
+
+1. Select Grade 8, section A. The grid shows Period 1-3 (8:00-10:15), a **Recess** row (10:15-10:45) with no selector, then Period 4-6 (10:45-1:00). All cells are empty.
+2. In Monday Period 1, choose **Math**. It shows Math and Test Teacher right away. Reload, and it's still there.
+3. The subject list in a cell offers only subjects assigned to Grade 8.
+4. Add section **B** to Grade 8. In section B, try Math on Monday Period 1. You should see "Teacher is already scheduled for Grade 8-A at this time." and the cell stays empty.
+5. In section B, Monday Period 2, choose Math. It works (different time).
+6. In section A, clear Monday Period 1. It becomes empty. Clearing an empty cell does nothing and shows no error.
+7. Switch between section A and B. Each shows only its own entries.
+8. In **Manage subjects**, rename **Math** to **Mathematics**. The timetable cells show the new name.
+
+### G. My Timetable (M4)
+
+1. Place Math in section A Monday Period 1 and English in Tuesday Period 2 as Admin. Sign out.
+2. Log in as **Teacher**. Open **My timetable**. You see every slot you teach across sections, with subject and section name.
+3. Log in as **Student** (assigned to section A). You see section A's full grid with subject and teacher.
+4. As Admin, unassign the student (roster dialog). Log in as Student again. You see a "no section assigned" message instead of a grid.
+5. Log in as **Parent**. The home screen has no Classes, Timetable builder or My timetable button.
+6. Sign in as Admin, then sign out and sign in as Teacher on the same tab. You land on Home, not on an admin page.
+
+### H. Roles
+
+1. Teacher, Student and Parent home screens never offer Classes or the admin Timetable builder. Their write requests are rejected with 403 (covered by automated tests).
 
 ---
 
@@ -169,5 +209,5 @@ Test accounts:
 
 After testing by hand, reply with one of:
 
-- **Approve**: M1 + M2 are accepted.
+- **Approve**: M1 to M4 are accepted.
 - **Send back**, with notes on what's wrong. I'll turn each note into a new TODO ticket, and you can then run `/build`.

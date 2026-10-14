@@ -8,6 +8,8 @@ export default defineConfig({
   test: {
     globals: true,
     root: './',
+    setupFiles: ['./test/setup-env.ts'],
+    globalSetup: ['./test/global-setup.ts'],
     include: ['**/*.spec.ts'],
     // Spec files share one real Postgres DB, so run files serially to avoid contention/timeouts.
     fileParallelism: false,

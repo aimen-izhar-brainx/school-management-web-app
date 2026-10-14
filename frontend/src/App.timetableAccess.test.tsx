@@ -35,7 +35,7 @@ describe('App role gating for the timetable builder (AC-17.2)', () => {
       const fetchMock = stubSession(role)
       render(<App />)
 
-      expect(await screen.findByRole('button', { name: /view timetable/i })).toBeInTheDocument()
+      expect(await screen.findByRole('button', { name: /view timetable|my timetable/i })).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /^timetable$/i })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /build|manage|edit.*timetable/i })).not.toBeInTheDocument()
 
@@ -132,7 +132,7 @@ describe('App view reset on sign-in/sign-out (AC-17.2)', () => {
       urls.length = 0
       await signIn(user, role)
 
-      expect(await screen.findByRole('button', { name: /view timetable/i })).toBeInTheDocument()
+      expect(await screen.findByRole('button', { name: /view timetable|my timetable/i })).toBeInTheDocument()
       expect(screen.getByRole('heading', { name: /welcome, /i })).toBeInTheDocument()
       expect(screen.queryByRole('heading', { name: /^timetable$/i })).not.toBeInTheDocument()
       expect(urls.filter(isBuilderFetch)).toEqual([])
@@ -151,7 +151,7 @@ describe('App view reset on sign-in/sign-out (AC-17.2)', () => {
       urls.length = 0
       await signIn(user, role)
 
-      expect(await screen.findByRole('button', { name: /view timetable/i })).toBeInTheDocument()
+      expect(await screen.findByRole('button', { name: /view timetable|my timetable/i })).toBeInTheDocument()
       expect(screen.queryByRole('heading', { name: /^classes$/i })).not.toBeInTheDocument()
       await waitFor(() => expect(urls.some((u) => /\/classes/.test(u))).toBe(false))
     })

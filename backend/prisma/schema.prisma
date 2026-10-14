@@ -30,13 +30,31 @@ model User {
   sectionId    String?
   section      Section? @relation("StudentSection", fields: [sectionId], references: [id], onDelete: SetNull)
 
+  // Profile fields. Which ones apply depends on the role (see backend/src/people).
+  phone         String?
+  gender        String?
+  address       String?
+  employeeId    String?   @unique
+  department    String?
+  joiningDate   DateTime? @db.Date
+  dateOfBirth   DateTime? @db.Date
+  rollNumber    String?
+  admissionDate DateTime? @db.Date
+  relationship  String?
+  parentId      String?
+  parent        User?     @relation("ParentChildren", fields: [parentId], references: [id], onDelete: SetNull)
+  children      User[]    @relation("ParentChildren")
+
   refreshTokens        RefreshToken[]
   passwordResets       PasswordResetToken[]
   classTeacherSections Section[]            @relation("SectionClassTeacher")
   taughtClassSubjects  ClassSubject[]       @relation("SubjectTeacher")
   timetableEntries     TimetableEntry[]     @relation("EntryTeacher")
+  notices              Notice[]
 
+  @@unique([sectionId, rollNumber])
   @@index([sectionId])
+  @@index([parentId])
 }
 
 model RefreshToken {
@@ -72,6 +90,7 @@ model Class {
 
   sections      Section[]
   classSubjects ClassSubject[]
+  notices       Notice[]
 }
 
 model Section {
@@ -150,4 +169,22 @@ model TimetableEntry {
   @@index([periodId])
   @@index([subjectId])
   @@index([teacherId])
+}
+
+/// A notice-board announcement. `classId` null means school-wide; otherwise only that class's students and their parents see it.
+model Notice {
+  id          String   @id @default(cuid())
+  title       String
+  description String
+  classId     String?
+  class       Class?   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  authorId    String?
+  author      User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  // Snapshot so the byline survives the author's account being deleted.
+  authorName  String
+  authorRole  Role
+  createdAt   DateTime @default(now())
+
+  @@index([classId])
+  @@index([createdAt])
 }
