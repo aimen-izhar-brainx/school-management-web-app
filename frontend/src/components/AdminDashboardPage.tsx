@@ -18,6 +18,7 @@ import { getRole } from '../data/roles'
 import { SECTION_OPTIONS, TEACHERS } from '../data/timetable'
 import type { AuthUser } from '../lib/auth'
 import type { PersonTab } from './AdminCreatePage'
+import { LatestNotices } from './LatestNotices'
 import { DashboardShell } from './DashboardShell'
 
 interface AdminDashboardPageProps {
@@ -193,6 +194,8 @@ export function AdminDashboardPage({
           </div>
         </div>
       </section>
+
+      <LatestNotices onViewAll={onOpenNotices} />
 
       <section className="mt-10">
         <h2 className="text-sm font-semibold text-slate-700">Quick navigation</h2>

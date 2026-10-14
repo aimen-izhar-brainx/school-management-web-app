@@ -59,3 +59,39 @@ export type MyTimetable =
       periods: TimetablePeriod[]
       entries: StudentTimetableEntry[]
     }
+
+export type PersonRole = 'teacher' | 'student' | 'parent'
+
+/** A teacher, student or parent as returned by `/people`. Dates are `YYYY-MM-DD`. */
+export interface Person {
+  id: string
+  name: string
+  email: string
+  role: PersonRole
+  phone: string | null
+  gender: string | null
+  address: string | null
+  employeeId: string | null
+  department: string | null
+  joiningDate: string | null
+  dateOfBirth: string | null
+  admissionDate: string | null
+  rollNumber: string | null
+  relationship: string | null
+  sectionId: string | null
+  section: { id: string; name: string; className: string } | null
+  parent: { id: string; name: string } | null
+  children: { id: string; name: string }[]
+}
+
+export interface Notice {
+  id: string
+  title: string
+  description: string
+  createdAt: string
+  /** null = school-wide. */
+  class: { id: string; name: string } | null
+  postedBy: string
+  postedByRole: 'admin' | 'teacher'
+  canDelete: boolean
+}

@@ -25,6 +25,15 @@ export class SectionsService {
     });
   }
 
+  /** Every section with its class name, for pickers that would otherwise need one request per class. */
+  async listAll() {
+    const rows = await this.prisma.section.findMany({
+      select: { id: true, name: true, class: { select: { id: true, name: true } } },
+      orderBy: [{ class: { name: 'asc' } }, { name: 'asc' }],
+    });
+    return rows.map((r) => ({ id: r.id, name: r.name, classId: r.class.id, className: r.class.name }));
+  }
+
   async create(classId: string, name: string) {
     await this.classes.assertExists(classId);
     await this.assertNameFree(classId, name);

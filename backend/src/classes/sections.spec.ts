@@ -466,4 +466,13 @@ describe('Sections API (T-015)', () => {
       expect(rows.map((r) => r.name)).toEqual(['Orig']);
     });
   });
+
+  it('GET /api/sections lists every section with its class name, admin only', async () => {
+    const cls = await makeClass('all');
+    const sec = await makeSection(cls.id, 'Z');
+    const res = await http().get('/api/sections').set('Authorization', adminAuth()).expect(200);
+    expect(res.body).toContainEqual({ id: sec.id, name: 'Z', classId: cls.id, className: cls.name });
+    await http().get('/api/sections').set('Authorization', `Bearer ${tokenFor('teacher')}`).expect(403);
+    await http().get('/api/sections').expect(401);
+  });
 });

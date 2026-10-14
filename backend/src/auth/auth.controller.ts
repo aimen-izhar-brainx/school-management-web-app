@@ -1,6 +1,7 @@
 import {
   Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Req, Res, UnauthorizedException, UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service.js';
 import { ForgotPasswordDto } from './dto/forgot-password.dto.js';
@@ -12,6 +13,7 @@ import type { JwtPayload } from './jwt.strategy.js';
 const REFRESH_COOKIE = 'refresh_token';
 const REFRESH_COOKIE_PATH = '/api/auth';
 
+@Throttle({ default: { ttl: 60_000, limit: 20 } })
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}

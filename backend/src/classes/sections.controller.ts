@@ -6,6 +6,18 @@ import { ClassTeacherDto } from './dto/class-teacher.dto.js';
 import { SectionNameDto } from './dto/section-name.dto.js';
 import { SectionsService } from './sections.service.js';
 
+@Controller('sections')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin')
+export class AllSectionsController {
+  constructor(private readonly sections: SectionsService) {}
+
+  @Get()
+  list() {
+    return this.sections.listAll();
+  }
+}
+
 @Controller('classes/:classId/sections')
 @UseGuards(JwtAuthGuard)
 export class SectionsController {

@@ -53,8 +53,8 @@ describe('RoleHome', () => {
   })
 
   it('own addition: preserves the max-w-3xl content width used before the DashboardShell migration', () => {
-    renderPage()
-    const heading = screen.getByText(/welcome, taylor teacher/i)
+    renderPage({ user: { ...user, id: 'student-1', name: 'Sam Student', role: 'student' } })
+    const heading = screen.getByText(/welcome, sam student/i)
     // DashboardShell hardcodes max-w-5xl on its <main>, which does NOT match
     // this page's current max-w-3xl — a naive migration would silently widen
     // this page's content. This must keep passing after the migration,
