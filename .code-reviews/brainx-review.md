@@ -1,11 +1,11 @@
 ---
-diff_hash: 0d10dc7b5824a7af9e5359d3e259fe1c9a253a1f2382ba6177bb92745641ca93
-reviewed_at: 2026-10-14T08:59:22Z
+diff_hash: 8ce931d7c12ae98694515fac7d254d087d57deba4c3fe81572d2b887ea764c08
+reviewed_at: 2026-10-14T09:38:10Z
 ---
 
 ## Summary
 
-T-033: MarkAttendancePage is wired to the real attendance API with same-day re-edit. The backend GET now always returns 200 with the full roster and student names, and PUT returns the original T-032 shape. Stack: NestJS (backend) + React (frontend). Specs and the ticket/status docs are updated.
+T-034: adds the admin attendance audit log and admin endpoints. New `AttendanceEdit` Prisma model and migration, plus `AttendanceAdminController` at `/attendance/admin/sections/:sectionId/days/:date`. `GET` is browse-only and returns the audit log. `PATCH` edits any day's attendance in one transaction and writes one audit row per real status change. Stack: NestJS 12 + Prisma 7 (backend only, no frontend change, so no cross-repo contract impact). New specs cover admin access and admin edits. Ticket and status docs are updated. The stale `.code-reviews/brainx-review.md` from the previous commit is removed and replaced by this review.
 
 ## Findings
 
@@ -13,42 +13,26 @@ T-033: MarkAttendancePage is wired to the real attendance API with same-day re-e
 
 ### High (0)
 
-### Medium (2)
-- **frontend/src/components/MarkAttendancePage.tsx:~160 (handleSave)** — A save in flight is not guarded against a section/date change. The select and date inputs stay enabled while `submitting`, and `handleSave` calls `setDay`/`setDraft`/`setEditing` without checking `latestDayRequest`. If the teacher switches section during the PUT, the old section's result overwrites `day` and is shown under the newly selected section. *(correctness)*
+### Medium (0)
+- **backend/src/attendance/attendance.service.ts:~100 (editAsAdmin)** — The transaction reads each entry's status, then updates by `id` alone and writes `fromStatus` from that earlier read. Under Postgres's default READ COMMITTED isolation, two overlapping admin edits (the UC-05-E3 case the comment claims is handled) can both read status `present`. Admin A then sets `absent` and admin B sets `leave`. Both audit rows record `fromStatus: present`, and the final status is whichever write lands last. The audit trail then shows a chain that never happened. The "each apply cleanly" claim only holds for the data, not for the audit log's accuracy. *(correctness)*
   - status: fixed
   - dev_reasoning: N/A
-  - ai_reasoning: Fixed. The section `<select>` and date `<input>` now carry `disabled={submitting}`, matching the existing disabled-state pattern used elsewhere in the component (e.g. the submit/save button), so the pickers can't be changed while a PUT is in flight.
-- **backend/src/attendance/attendance.service.ts:100 and :90** — `user.findMany` for the roster and the session `entries` select have no `orderBy`. Student order is database-defined and can change between loads, so rows can shuffle between the unsubmitted form and the submitted view. *(correctness)*
-  - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: Fixed. `orderBy: { name: 'asc' }` was added to the roster `user.findMany`, and `orderBy: { student: { name: 'asc' } }` to the `entries` list query in `loadResponse` (the `AttendanceEntry.student` relation is to-one, so Prisma 7 supports ordering the to-many `entries` list by the related student's name directly).
+  - ai_reasoning: Fixed. The update is now a compare-and-update (`updateMany` where `id` and the previously read `status`), with a bounded re-read/retry loop and a 409 `ConflictException` after 3 attempts. `fromStatus` is taken from the value read immediately before the successful write. Original suggestion: Make the update conditional on the status that was read, e.g. `tx.attendanceEntry.updateMany({ where: { id, status: existing.status }, data })`, and handle `count === 0` by re-reading or throwing a 409. Alternatively, lock the session's entries first (`SELECT ... FOR UPDATE`) or use `Serializable` isolation with a retry.
 
-### Low (4)
-- **frontend/src/components/MarkAttendancePage.tsx:~95 (loadDirectory)** — Fetches `/classes` and then one `/sections` request per class, so request count grows with the number of classes. The ticket notes say this mirrors TimetablePage, so the impact is small. *(maintainability)*
-  - status: skipped
-  - dev_reasoning: Intentionally matches the existing fan-out pattern already used by TimetablePage.tsx for the same `/classes` + per-class `/sections` lookup — this ticket's own technical notes specify reusing that exact pattern. A dedicated "my sections" endpoint would be a reasonable follow-up but is a new backend surface, out of scope for this ticket.
-  - ai_reasoning: Acceptable for now. A "my sections" endpoint would remove the fan-out and the client-side filter.
-- **frontend/src/components/MarkAttendancePage.tsx (date input)** — The user can clear the date input, which makes `date` an empty string. The page then requests `/days/` and shows a confusing routing error. *(correctness)*
+### Low (0)
+- **backend/src/attendance/attendance.service.ts:~118 (editAsAdmin loop)** — Each changed student costs two sequential awaited queries (`update` + `audit create`) inside the loop, so a full-section edit runs up to 2×N round trips. N is bounded by section size, so impact is small. Batching the audit rows with `createMany` after the updates would cut the queries roughly in half. *(maintainability)*
   - status: fixed
   - dev_reasoning: N/A
-  - ai_reasoning: Fixed. The day-load effect now checks `isValidDateKey(date)` (a `YYYY-MM-DD` regex) before firing, so an empty or incomplete date value is ignored instead of hitting a malformed `/days/` URL. Covered by a new test.
-- **backend/src/attendance/attendance.service.ts:64** — `findUniqueOrThrow` raises a Prisma P2025 error, which surfaces as a 500 if the session is ever absent. This is unlikely right after the upsert, but it bypasses the Nest exception mapping used elsewhere. *(consistency)*
-  - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: Fixed. `loadSubmitResponse` now uses `findUnique` plus an explicit null check that throws `NotFoundException`, consistent with `findSection`'s not-found handling elsewhere in this service.
-- **backend/tsconfig.build.tsbuildinfo** — A build artifact is tracked in git and modified in this diff, which adds noise and merge conflicts. *(maintainability)*
-  - status: skipped
-  - dev_reasoning: pre-existing tracked build artifact from before this ticket; untracking it is an unrelated repo-hygiene change out of scope here.
-  - ai_reasoning: Add it to .gitignore and untrack it in a separate commit.
+  - ai_reasoning: Fixed. Audit rows are collected in `auditRows` and written with a single `attendanceEdit.createMany` after the loop. Original note: Low impact because the roster is small and bounded. Collect the audit rows in an array and write them with a single `attendanceEdit.createMany` after the loop. This also folds in naturally with the conditional-update fix above.
 
 ## Reviewed files
-- .code-reviews/brainx-review.md (deleted, replaced by this review)
+- .code-reviews/brainx-review.md (previous review file, removed in the staged diff, replaced by this one)
+- backend/prisma/migrations/20261014091000_add_attendance_edit/migration.sql
+- backend/prisma/schema.prisma
+- backend/src/attendance/attendance-admin-access.spec.ts
+- backend/src/attendance/attendance-admin-edit.spec.ts
+- backend/src/attendance/attendance.controller.ts
+- backend/src/attendance/attendance.module.ts
 - backend/src/attendance/attendance.service.ts
-- backend/src/attendance/attendance-date.spec.ts
-- backend/src/attendance/attendance-edit.spec.ts
-- backend/src/attendance/attendance-submit.spec.ts
-- backend/tsconfig.build.tsbuildinfo (generated, skimmed)
-- frontend/src/components/MarkAttendancePage.tsx
-- frontend/src/components/MarkAttendancePage.test.tsx
-- tickets/STATUS.md
-- tickets/T-033.md
+- tickets/STATUS.md (docs, skimmed)
+- tickets/T-034.md (docs, skimmed)

@@ -1,4 +1,10 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client.js';
 import type { AttendanceStatus } from '../generated/prisma/enums.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -9,6 +15,8 @@ const NOT_CLASS_TEACHER = 'You are not the class teacher for this section.';
 const BAD_DATE_FORMAT = 'Date must be a valid calendar date in YYYY-MM-DD format.';
 const LOCKED =
   'Attendance for this date is locked: only today\'s attendance can be submitted or edited.';
+const NOT_MARKED_YET =
+  'Attendance for this section and date is not marked yet, so there is nothing to edit.';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -54,7 +62,135 @@ export class AttendanceService {
     const section = await this.findSection(sectionId);
     this.assertOwner(section, callerId);
     this.assertValidDateFormat(dateStr);
-    return this.loadResponse(sectionId, dateStr);
+    return this.loadResponse(sectionId, dateStr, { includeEdits: false });
+  }
+
+  // T-034: admin browse — same response shape as the teacher-facing `get()` above, but no
+  // ownership check (any section, per `@Roles('admin')` at the route level) and the `edits`
+  // audit log is populated instead of the hardcoded empty placeholder.
+  async getAsAdmin(sectionId: string, dateStr: string) {
+    await this.findSection(sectionId);
+    this.assertValidDateFormat(dateStr);
+    return this.loadResponse(sectionId, dateStr, { includeEdits: true });
+  }
+
+  // T-034: admin-only edit of any day's attendance (locked or not). Only entries whose status
+  // actually changes produce an `AttendanceEdit` audit row (UC-05-E1); a session must already
+  // exist for this section+date, otherwise it's rejected (UC-05-E2, admin edits existing records,
+  // doesn't create original submissions). The whole request runs in a single transaction so two
+  // overlapping admin edits (UC-05-E3) each apply cleanly and each produce their own audit rows.
+  //
+  // Race-condition fix: under READ COMMITTED, two concurrent admin PATCHes on the SAME student
+  // can both read the same stale `status`. A bare `update({ where: { id } })` would blindly accept
+  // whichever write lands second and record a `fromStatus` that was never actually true at write
+  // time. Instead each write is conditional on the status still being what we read
+  // (`updateMany({ where: { id, status }})`); if `count === 0` someone else changed it first, so we
+  // re-read the fresh value within this same transaction and retry the compare-and-update (bounded
+  // to a few attempts — this should be unreachable beyond one retry for a 2-request race, but we
+  // don't want a theoretical infinite loop).
+  async editAsAdmin(
+    sectionId: string,
+    dateStr: string,
+    entries: AttendanceEntryInput[],
+    editedById: string,
+  ) {
+    await this.findSection(sectionId);
+    this.assertValidDateFormat(dateStr);
+    this.assertNoDuplicateStudentIds(entries);
+
+    const date = this.toDateOnly(dateStr);
+    const MAX_ATTEMPTS = 3;
+    await this.prisma.$transaction(async (tx) => {
+      const session = await tx.attendanceSession.findUnique({
+        where: { sectionId_date: { sectionId, date } },
+        select: {
+          id: true,
+          entries: { select: { id: true, studentId: true, status: true } },
+        },
+      });
+      if (!session) throw new NotFoundException(NOT_MARKED_YET);
+
+      const byStudentId = new Map(session.entries.map((e) => [e.studentId, e]));
+
+      // Reject the whole request (nothing partial written, thanks to the surrounding transaction)
+      // if any incoming studentId isn't on this session's roster — consistent with submit()'s
+      // assertRosterCovered() explicitly naming unknown ids instead of silently dropping them.
+      const unmatched = entries
+        .map((e) => e.studentId)
+        .filter((studentId) => !byStudentId.has(studentId));
+      if (unmatched.length > 0) {
+        throw new BadRequestException(
+          `Attendance edit includes unknown student id(s) not on this session's roster: ${unmatched.join(', ')}.`,
+        );
+      }
+
+      // Collected as each entry's update succeeds, then written with a single `createMany` after
+      // the loop instead of one `create` per entry.
+      const auditRows: {
+        sessionId: string;
+        studentId: string;
+        fromStatus: AttendanceStatus;
+        toStatus: AttendanceStatus;
+        editedById: string;
+        editedAt: Date;
+      }[] = [];
+
+      for (const incoming of entries) {
+        let existing = byStudentId.get(incoming.studentId)!;
+        if (existing.status === incoming.status) continue; // UC-05-E1: no real change, no audit row.
+
+        let applied = false;
+        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+          // The freshly-read status may itself have caught up to the requested target (e.g. a
+          // concurrent edit already set it to exactly what this request wants) — nothing left to
+          // change or audit.
+          if (existing.status === incoming.status) {
+            applied = true;
+            break;
+          }
+
+          const result = await tx.attendanceEntry.updateMany({
+            where: { id: existing.id, status: existing.status },
+            data: { status: incoming.status },
+          });
+
+          if (result.count > 0) {
+            // `fromStatus` reflects exactly the value read immediately before this successful
+            // write, so concurrent edits to the same student produce an accurate, sequential
+            // audit chain instead of both claiming to start from the original stale read.
+            auditRows.push({
+              sessionId: session.id,
+              studentId: incoming.studentId,
+              fromStatus: existing.status,
+              toStatus: incoming.status,
+              editedById,
+              editedAt: new Date(),
+            });
+            applied = true;
+            break;
+          }
+
+          // Someone else changed this row's status between our SELECT and our UPDATE — re-fetch
+          // the current value within this same transaction and retry the compare-and-update.
+          existing = await tx.attendanceEntry.findUniqueOrThrow({
+            where: { id: existing.id },
+            select: { id: true, studentId: true, status: true },
+          });
+        }
+
+        if (!applied) {
+          throw new ConflictException(
+            `Could not apply the attendance edit for student ${incoming.studentId}: its status kept changing concurrently. Please retry.`,
+          );
+        }
+      }
+
+      if (auditRows.length > 0) {
+        await tx.attendanceEdit.createMany({ data: auditRows });
+      }
+    });
+
+    return this.loadResponse(sectionId, dateStr, { includeEdits: true });
   }
 
   // Unchanged from T-032: PUT keeps returning the bare `{ studentId, status }` shape (a session
@@ -82,7 +218,14 @@ export class AttendanceService {
   // T-033: extends the GET response with full student names and, when no session exists yet,
   // the section's complete roster (status: null per student) instead of a bare 404 — closing the
   // gap where there was previously no teacher-accessible way to enumerate a section's roster.
-  private async loadResponse(sectionId: string, dateStr: string) {
+  // T-034: shared by both the teacher-facing `get()` and the admin-facing `getAsAdmin()`/
+  // `editAsAdmin()` — `includeEdits` is the only behavioral difference (the admin audit log vs.
+  // the teacher's always-empty placeholder); ownership is checked by the caller, not here.
+  private async loadResponse(
+    sectionId: string,
+    dateStr: string,
+    { includeEdits }: { includeEdits: boolean },
+  ) {
     const date = this.toDateOnly(dateStr);
     const session = await this.prisma.attendanceSession.findUnique({
       where: { sectionId_date: { sectionId, date } },
@@ -93,6 +236,18 @@ export class AttendanceService {
           select: { status: true, student: { select: { id: true, name: true } } },
           orderBy: { student: { name: 'asc' } },
         },
+        edits: includeEdits
+          ? {
+              select: {
+                studentId: true,
+                fromStatus: true,
+                toStatus: true,
+                editedById: true,
+                editedAt: true,
+              },
+              orderBy: { editedAt: 'asc' },
+            }
+          : false,
       },
     });
 
@@ -118,9 +273,10 @@ export class AttendanceService {
       submittedBy: session.submittedBy,
       submittedAt: session.submittedAt,
       entries: session.entries.map((e) => ({ student: e.student, status: e.status })),
-      // Teacher same-day edits are never audited (confirmed in docs/plan.md); the audit log
-      // itself (AttendanceEdit, populated by admin PATCH edits) lands in T-034.
-      edits: [],
+      // Teacher same-day edits are never audited (confirmed in docs/plan.md). For the teacher's
+      // own endpoint this stays the hardcoded empty placeholder; the admin endpoints populate it
+      // with the real `AttendanceEdit` audit rows.
+      edits: includeEdits ? (session.edits ?? []) : [],
     };
   }
 

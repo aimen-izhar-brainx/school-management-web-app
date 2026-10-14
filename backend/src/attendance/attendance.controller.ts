@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Put, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import type { JwtPayload } from '../auth/jwt.strategy.js';
@@ -31,5 +31,30 @@ export class AttendanceController {
     @Req() req: Request & { user: JwtPayload },
   ) {
     return this.attendance.get(sectionId, date, req.user.sub);
+  }
+}
+
+// T-034: kept as a separate `/attendance/admin/...` route (rather than overloading the M1
+// teacher route above) so `@Roles('admin')` vs `@Roles('teacher')` guards stay simple and
+// AC-07.1/AC-07.2 are trivial route-level checks — no ownership check is performed here at all.
+@Controller('attendance/admin/sections/:sectionId/days')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin')
+export class AttendanceAdminController {
+  constructor(private readonly attendance: AttendanceService) {}
+
+  @Get(':date')
+  get(@Param('sectionId') sectionId: string, @Param('date') date: string) {
+    return this.attendance.getAsAdmin(sectionId, date);
+  }
+
+  @Patch(':date')
+  edit(
+    @Param('sectionId') sectionId: string,
+    @Param('date') date: string,
+    @Body() dto: SubmitAttendanceDto,
+    @Req() req: Request & { user: JwtPayload },
+  ) {
+    return this.attendance.editAsAdmin(sectionId, date, dto.entries, req.user.sub);
   }
 }

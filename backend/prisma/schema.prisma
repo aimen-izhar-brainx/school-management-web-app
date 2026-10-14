@@ -37,6 +37,8 @@ model User {
   timetableEntries      TimetableEntry[]     @relation("EntryTeacher")
   attendanceSubmissions AttendanceSession[]  @relation("AttendanceSubmitter")
   attendanceEntries     AttendanceEntry[]    @relation("StudentAttendance")
+  attendanceEditsOnMe   AttendanceEdit[]     @relation("AttendanceEditedStudent")
+  attendanceEditsByMe   AttendanceEdit[]     @relation("AttendanceEditedBy")
 
   @@index([sectionId])
 }
@@ -161,7 +163,7 @@ enum AttendanceStatus {
   leave
 }
 
-// One session per section+day; AttendanceEdit (admin audit log) arrives in T-034.
+// One session per section+day; AttendanceEdit (admin audit log) added in T-034.
 model AttendanceSession {
   id            String   @id @default(cuid())
   sectionId     String
@@ -173,6 +175,7 @@ model AttendanceSession {
   updatedAt     DateTime @updatedAt
 
   entries AttendanceEntry[]
+  edits   AttendanceEdit[]
 
   @@unique([sectionId, date])
   @@index([submittedById])
@@ -188,4 +191,22 @@ model AttendanceEntry {
 
   @@unique([sessionId, studentId])
   @@index([studentId])
+}
+
+// T-034: admin audit log — one row per student status change made via the admin edit endpoint.
+model AttendanceEdit {
+  id         String            @id @default(cuid())
+  sessionId  String
+  session    AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  studentId  String
+  student    User              @relation("AttendanceEditedStudent", fields: [studentId], references: [id])
+  fromStatus AttendanceStatus
+  toStatus   AttendanceStatus
+  editedById String
+  editedBy   User              @relation("AttendanceEditedBy", fields: [editedById], references: [id])
+  editedAt   DateTime          @default(now())
+
+  @@index([sessionId])
+  @@index([studentId])
+  @@index([editedById])
 }
