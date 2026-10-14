@@ -1,11 +1,11 @@
 ---
-diff_hash: 8ce931d7c12ae98694515fac7d254d087d57deba4c3fe81572d2b887ea764c08
-reviewed_at: 2026-10-14T09:38:10Z
+diff_hash: c1fc2d01e6e53c52287c4d13b9866ece23372a4e83c1c1125794238831cca423
+reviewed_at: 2026-10-14T12:00:00Z
 ---
 
 ## Summary
 
-T-034: adds the admin attendance audit log and admin endpoints. New `AttendanceEdit` Prisma model and migration, plus `AttendanceAdminController` at `/attendance/admin/sections/:sectionId/days/:date`. `GET` is browse-only and returns the audit log. `PATCH` edits any day's attendance in one transaction and writes one audit row per real status change. Stack: NestJS 12 + Prisma 7 (backend only, no frontend change, so no cross-repo contract impact). New specs cover admin access and admin edits. Ticket and status docs are updated. The stale `.code-reviews/brainx-review.md` from the previous commit is removed and replaced by this review.
+T-035: rewires the "Browse & edit" section of the admin `AttendancePage` (React 19) to the real T-034 endpoints. It loads classes and sections, fetches a day with `GET /attendance/admin/sections/:id/days/:date`, edits through `PATCH`, and renders the audit "Edit log". On the backend, `loadResponse` additively returns `editedBy: { id, name }` on each audit row, and the existing admin edit spec asserts it. The frontend tests are rewritten to match, and the ticket and status docs are updated. Stacks: React (frontend) and NestJS + Prisma (backend). This is a single repo, so there is no cross-repo contract risk. The frontend's `editedBy?` is optional and the backend change is additive, so the two sides stay compatible. The two report tables still use mock data (T-037's scope).
 
 ## Findings
 
@@ -13,26 +13,37 @@ T-034: adds the admin attendance audit log and admin endpoints. New `AttendanceE
 
 ### High (0)
 
-### Medium (0)
-- **backend/src/attendance/attendance.service.ts:~100 (editAsAdmin)** — The transaction reads each entry's status, then updates by `id` alone and writes `fromStatus` from that earlier read. Under Postgres's default READ COMMITTED isolation, two overlapping admin edits (the UC-05-E3 case the comment claims is handled) can both read status `present`. Admin A then sets `absent` and admin B sets `leave`. Both audit rows record `fromStatus: present`, and the final status is whichever write lands last. The audit trail then shows a chain that never happened. The "each apply cleanly" claim only holds for the data, not for the audit log's accuracy. *(correctness)*
+### Medium (3)
+- **frontend/src/components/AttendancePage.tsx:165-169** — When the date input is cleared, the effect returns early without resetting `day`, `dayStatus` or `isEditing`. The previous day's roster stays on screen with `canEdit` still true. Clicking "Edit this day" and then "Save changes" sends `PATCH .../days/` with an empty date, which is a malformed URL. If the admin was already editing when they cleared the date, edit mode also stays active. The guard avoids the bad GET but not the bad PATCH, and the UI shows data that doesn't match the selected date. *(correctness)*
   - status: fixed
   - dev_reasoning: N/A
-  - ai_reasoning: Fixed. The update is now a compare-and-update (`updateMany` where `id` and the previously read `status`), with a bounded re-read/retry loop and a 409 `ConflictException` after 3 attempts. `fromStatus` is taken from the value read immediately before the successful write. Original suggestion: Make the update conditional on the status that was read, e.g. `tx.attendanceEntry.updateMany({ where: { id, status: existing.status }, data })`, and handle `count === 0` by re-reading or throwing a 409. Alternatively, lock the session's entries first (`SELECT ... FOR UPDATE`) or use `Serializable` isolation with a retry.
+  - ai_reasoning: Fixed. The invalid-date branch of the load effect now also clears the loaded day (`setDay(null)`, `setDayStatus('idle')`, `setIsEditing(false)`), so a cleared date resets the view instead of leaving stale data interactive. `canEdit` and `saveEditing` are additionally gated on `isValidDateKey(browseDate)` as a second guard, so a save can never fire with an invalid date even if some other path left `isEditing` true. Covered by two new tests.
+- **frontend/src/components/AttendancePage.tsx:141-145** — The directory load issues one `GET /classes/:id/sections` per class, all at once with `Promise.all`, on every page mount. This N+1 fan-out grows with the number of classes. A single failed request rejects the whole load, so the section picker never appears. *(performance)*
+  - status: skipped
+  - dev_reasoning: Same pattern already explicitly reviewed and accepted (status: skipped) for T-033's equivalent code in MarkAttendancePage.tsx — see `.code-reviews/records/5679fa158fa443718f0637643fd26a219843d0b3.md`: "Intentionally matches the existing fan-out pattern already used by TimetablePage.tsx for the same `/classes` + per-class `/sections` lookup — this ticket's own technical notes specify reusing that exact pattern. A dedicated 'my sections' endpoint would be a reasonable follow-up but is a new backend surface, out of scope for this ticket." This T-035 finding is the identical fan-out applied to the admin's unfiltered picker rather than the teacher's filtered one — the established, already-accepted pattern for this codebase, not new scope creep.
+  - ai_reasoning: Acceptable for now, consistent with the T-033 precedent. A dedicated "sections" endpoint (filtered or unfiltered) would remove the fan-out but is out of scope here.
+- **frontend/src/components/AttendancePage.tsx:100-585** — `AttendancePage` is now ~485 lines and mixes real-API browse/edit state (about 15 `useState`/`useRef` hooks plus three async flows) with two mock-backed report sections. This is well above the ~150-200 line guideline. The directory-loading effect and the day-loading effect are hand-rolled with request-id refs. The same pattern probably exists in `MarkAttendancePage`, so it likely belongs in a shared hook. *(maintainability)*
+  - status: skipped
+  - dev_reasoning: Valid observation, but T-037 (the very next ticket, already written — see tickets/T-037.md) touches this exact same file next to wire the two still-mocked report sections to real APIs too. Extracting a shared component/hook now, before T-037 lands, risks a premature refactor of code that's about to change again. Deferring the extraction decision until after T-037, when the full picture of the file's real-API-backed shape is known, avoids redoing the extraction.
+  - ai_reasoning: Reasonable to defer. Revisit the extraction (e.g. `AdminAttendanceBrowser` component or `useAdminAttendanceDay` hook) once T-037 lands and the file's full real-API shape is settled.
 
-### Low (0)
-- **backend/src/attendance/attendance.service.ts:~118 (editAsAdmin loop)** — Each changed student costs two sequential awaited queries (`update` + `audit create`) inside the loop, so a full-section edit runs up to 2×N round trips. N is bounded by section size, so impact is small. Batching the audit rows with `createMany` after the updates would cut the queries roughly in half. *(maintainability)*
+### Low (2)
+- **frontend/src/components/AttendancePage.tsx:431** — The edit log list uses the array index as its `key`. The list is reversed and fully replaced after each save, so the keys are not stable identities. This causes no functional issue today because the rows have no local state. *(consistency)*
   - status: fixed
   - dev_reasoning: N/A
-  - ai_reasoning: Fixed. Audit rows are collected in `auditRows` and written with a single `attendanceEdit.createMany` after the loop. Original note: Low impact because the roster is small and bounded. Collect the audit rows in an array and write them with a single `attendanceEdit.createMany` after the loop. This also folds in naturally with the conditional-update fix above.
+  - ai_reasoning: Fixed. The edit log list now keys each row with a composite `${edit.studentId}-${edit.editedAt}` instead of the array index.
+- **backend/tsconfig.build.tsbuildinfo:1** — A generated TypeScript incremental build artifact is tracked in git and modified in this diff, which adds noise to reviews and can cause merge conflicts. *(maintainability)*
+  - status: skipped
+  - dev_reasoning: Same recurring pre-existing finding already skipped with reason in prior tickets (T-033, T-034): pre-existing tracked build artifact from before this ticket; untracking it is an unrelated repo-hygiene change out of scope here.
+  - ai_reasoning: Untrack it with `git rm --cached` and add `*.tsbuildinfo` to `.gitignore`, in a dedicated repo-hygiene change.
 
 ## Reviewed files
-- .code-reviews/brainx-review.md (previous review file, removed in the staged diff, replaced by this one)
-- backend/prisma/migrations/20261014091000_add_attendance_edit/migration.sql
-- backend/prisma/schema.prisma
-- backend/src/attendance/attendance-admin-access.spec.ts
+- .code-reviews/brainx-review.md (previous review, removed in the staged diff; replaced by this one)
 - backend/src/attendance/attendance-admin-edit.spec.ts
-- backend/src/attendance/attendance.controller.ts
-- backend/src/attendance/attendance.module.ts
 - backend/src/attendance/attendance.service.ts
+- backend/tsconfig.build.tsbuildinfo (generated, skimmed)
+- frontend/src/components/AttendancePage.largeRoster.test.tsx (skimmed)
+- frontend/src/components/AttendancePage.test.tsx (skimmed)
+- frontend/src/components/AttendancePage.tsx
 - tickets/STATUS.md (docs, skimmed)
-- tickets/T-034.md (docs, skimmed)
+- tickets/T-035.md (docs, skimmed)

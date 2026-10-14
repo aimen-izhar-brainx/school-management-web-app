@@ -331,6 +331,7 @@ describe('PATCH /api/attendance/admin/sections/:sectionId/days/:date — admin e
         fromStatus: 'present',
         toStatus: 'absent',
         editedById: admin.id,
+        editedBy: { id: admin.id, name: admin.name },
       });
       expect(res.body.edits[0]).toHaveProperty('editedAt');
     });

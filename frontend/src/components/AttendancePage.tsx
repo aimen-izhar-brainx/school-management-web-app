@@ -1,5 +1,5 @@
 import { BarChart3, History, Lock, Pencil, Save, X } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ATTENDANCE_STATUSES,
   INITIAL_ATTENDANCE_RECORDS,
@@ -13,12 +13,14 @@ import {
   rosterFor,
   statusInfo,
   summarizeEntries,
-  type AttendanceEdit,
   type AttendanceRecord,
   type AttendanceStatus,
 } from '../data/attendance'
 import { SECTION_OPTIONS, sectionLabel } from '../data/timetable'
 import type { AuthUser } from '../lib/auth'
+import { compareByName } from '../lib/compareByName'
+import { errorMessage } from '../lib/errorMessage'
+import { api } from '../lib/http'
 import { AttendanceList } from './AttendanceList'
 import { AttendanceStatusBadge } from './AttendanceStatusBadge'
 import { formatAttendancePercentage } from './attendancePercentage'
@@ -30,67 +32,220 @@ interface AttendancePageProps {
   onSignOut: () => void
 }
 
-/** Admin-only screen: browse & correct any class's attendance, plus basic daily/monthly reports. UI only — nothing is persisted yet. */
-export function AttendancePage({ user, onBack, onSignOut }: AttendancePageProps) {
-  const [records, setRecords] = useState<Record<string, AttendanceRecord>>(INITIAL_ATTENDANCE_RECORDS)
+interface NamedRow {
+  id: string
+  name: string
+}
 
-  const [browseSectionId, setBrowseSectionId] = useState(SECTION_OPTIONS[0]?.id ?? '')
+interface SectionRow extends NamedRow {
+  classTeacher: NamedRow | null
+}
+
+interface SectionChoice {
+  id: string
+  label: string
+}
+
+interface AdminAttendanceEntryRow {
+  student: NamedRow
+  status: AttendanceStatus | null
+}
+
+interface AdminAttendanceEditRow {
+  studentId: string
+  fromStatus: AttendanceStatus
+  toStatus: AttendanceStatus
+  editedById: string
+  editedBy?: NamedRow
+  editedAt: string
+}
+
+interface AdminAttendanceDayResponse {
+  submitted: boolean
+  locked: boolean
+  submittedBy?: NamedRow
+  submittedAt?: string
+  entries: AdminAttendanceEntryRow[]
+  edits?: AdminAttendanceEditRow[]
+}
+
+type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+/** A full `YYYY-MM-DD` calendar date — guards against the date input being cleared (empty string). */
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+function isValidDateKey(value: string): boolean {
+  return DATE_RE.test(value)
+}
+
+/** Every roster student, defaulted to "present" wherever no status has been saved yet. */
+function draftFromEntries(entries: AdminAttendanceEntryRow[]): Record<string, AttendanceStatus> {
+  const draft: Record<string, AttendanceStatus> = {}
+  for (const entry of entries) draft[entry.student.id] = entry.status ?? 'present'
+  return draft
+}
+
+/**
+ * Resolves the name shown for an audit row's editor. The backend joins `editedBy: { id, name }`
+ * (T-035 gap fix) so a different admin's past edit always resolves to a real name; if that's ever
+ * missing, fall back to the current user's own name when it's a self-edit (common right after
+ * `saveEditing`), or the bare id as a last resort.
+ */
+function editorNameFor(edit: AdminAttendanceEditRow, user: AuthUser): string {
+  if (edit.editedBy?.name) return edit.editedBy.name
+  if (edit.editedById === user.id) return user.name
+  return edit.editedById
+}
+
+/** Admin-only screen: browse & correct any class's attendance, plus basic daily/monthly reports. */
+export function AttendancePage({ user, onBack, onSignOut }: AttendancePageProps) {
+  // Daily summary & monthly % tables below "Browse & edit" are T-037's scope and still run on
+  // this mock dataset — left untouched.
+  const [records] = useState<Record<string, AttendanceRecord>>(INITIAL_ATTENDANCE_RECORDS)
+
+  const [sections, setSections] = useState<SectionChoice[]>([])
+  const [directoryStatus, setDirectoryStatus] = useState<LoadStatus>('loading')
+  const [directoryError, setDirectoryError] = useState<string | null>(null)
+
+  const [browseSectionId, setBrowseSectionId] = useState('')
   const [browseDate, setBrowseDate] = useState(mostRecentSchoolDay())
+
+  const [day, setDay] = useState<AdminAttendanceDayResponse | null>(null)
+  const [dayStatus, setDayStatus] = useState<LoadStatus>('idle')
+  const [dayError, setDayError] = useState<string | null>(null)
+
   const [isEditing, setIsEditing] = useState(false)
   const [editDraft, setEditDraft] = useState<Record<string, AttendanceStatus>>({})
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const [summaryDate, setSummaryDate] = useState(mostRecentSchoolDay())
 
   const [monthlySectionId, setMonthlySectionId] = useState(SECTION_OPTIONS[0]?.id ?? '')
   const [monthKey, setMonthKey] = useState(currentMonthKey())
 
-  const browseKey = attendanceKey(browseSectionId, browseDate)
-  const browseRecord = records[browseKey] ?? null
-  const browseRoster = rosterFor(browseSectionId)
+  const isMounted = useRef(true)
+  const latestDirectoryRequest = useRef(0)
+  const latestDayRequest = useRef(0)
 
-  // Leaving edit mode when the filters change avoids silently editing the wrong day.
-  const [editedKey, setEditedKey] = useState(browseKey)
-  if (editedKey !== browseKey) {
-    setEditedKey(browseKey)
-    if (isEditing) setIsEditing(false)
-  }
+  useEffect(() => {
+    isMounted.current = true
+    return () => {
+      isMounted.current = false
+    }
+  }, [])
+
+  useEffect(() => {
+    const request = ++latestDirectoryRequest.current
+    async function loadDirectory() {
+      try {
+        const classes = await api.get<NamedRow[]>('/classes')
+        const sortedClasses = [...classes].sort(compareByName)
+        const sectionLists = await Promise.all(
+          sortedClasses.map((row) => api.get<SectionRow[]>(`/classes/${row.id}/sections`)),
+        )
+        if (!isMounted.current || request !== latestDirectoryRequest.current) return
+
+        const flat: SectionChoice[] = sortedClasses.flatMap((row, index) =>
+          [...sectionLists[index]]
+            .sort(compareByName)
+            .map((section) => ({ id: section.id, label: `${row.name} - ${section.name}` })),
+        )
+        setSections(flat)
+        setDirectoryStatus('ready')
+        if (flat.length > 0) setBrowseSectionId(flat[0].id)
+      } catch (error) {
+        if (!isMounted.current || request !== latestDirectoryRequest.current) return
+        setDirectoryError(errorMessage(error))
+        setDirectoryStatus('error')
+      }
+    }
+    void loadDirectory()
+  }, [])
+
+  useEffect(() => {
+    // Clears any previously loaded day so the stale roster doesn't stay on screen (with
+    // "Edit this day" still enabled) once the section/date no longer points at it.
+    function resetStaleDay() {
+      setDay(null)
+      setDayStatus('idle')
+      setIsEditing(false)
+    }
+
+    if (!browseSectionId) return
+    // Clearing the date input makes `browseDate` an empty string — don't fire a request to a
+    // malformed `/days/` URL for it.
+    if (!isValidDateKey(browseDate)) {
+      resetStaleDay()
+      return
+    }
+    const request = ++latestDayRequest.current
+
+    async function loadDay() {
+      setDayStatus('loading')
+      setDayError(null)
+      // Leaving edit mode when the section/date changes avoids silently editing the wrong day.
+      setIsEditing(false)
+      setSaveError(null)
+      try {
+        const data = await api.get<AdminAttendanceDayResponse>(
+          `/attendance/admin/sections/${browseSectionId}/days/${browseDate}`,
+        )
+        if (!isMounted.current || request !== latestDayRequest.current) return
+        setDay(data)
+        setDayStatus('ready')
+      } catch (error) {
+        if (!isMounted.current || request !== latestDayRequest.current) return
+        setDayError(errorMessage(error))
+        setDayStatus('error')
+      }
+    }
+    void loadDay()
+  }, [browseSectionId, browseDate])
+
+  const roster = day?.entries ?? []
+  const browseCounts = day?.submitted
+    ? summarizeEntries(Object.fromEntries(roster.map((entry) => [entry.student.id, entry.status as AttendanceStatus])))
+    : null
+  const canEdit =
+    dayStatus === 'ready' && !!day && day.submitted && roster.length > 0 && isValidDateKey(browseDate)
 
   const startEditing = () => {
-    if (!browseRecord) return
-    setEditDraft({ ...browseRecord.entries })
+    if (!day) return
+    setEditDraft(draftFromEntries(day.entries))
+    setSaveError(null)
     setIsEditing(true)
   }
 
   const cancelEditing = () => {
     setIsEditing(false)
     setEditDraft({})
+    setSaveError(null)
   }
 
-  const saveEditing = () => {
-    if (!browseRecord) return
-    const editedAt = new Date().toISOString()
-    const newEdits: AttendanceEdit[] = []
-
-    for (const student of browseRoster) {
-      const from = browseRecord.entries[student.id]
-      const to = editDraft[student.id]
-      if (from && to && from !== to) {
-        newEdits.push({ studentId: student.id, from, to, editedBy: user.name, editedAt })
-      }
-    }
-
-    if (newEdits.length > 0) {
-      setRecords((prev) => ({
-        ...prev,
-        [browseKey]: {
-          ...browseRecord,
-          entries: editDraft,
-          editLog: [...browseRecord.editLog, ...newEdits],
-        },
+  const saveEditing = async () => {
+    // Guards against a save ever firing with a malformed/empty date, even if some other path
+    // left `isEditing` true (belt-and-braces alongside the `canEdit` gate above).
+    if (!day || !isValidDateKey(browseDate)) return
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const entries = roster.map((entry) => ({
+        studentId: entry.student.id,
+        status: editDraft[entry.student.id] ?? entry.status ?? 'present',
       }))
+      const response = await api.patch<AdminAttendanceDayResponse>(
+        `/attendance/admin/sections/${browseSectionId}/days/${browseDate}`,
+        { entries },
+      )
+      if (!isMounted.current) return
+      setDay(response)
+      setIsEditing(false)
+    } catch (error) {
+      if (!isMounted.current) return
+      setSaveError(errorMessage(error))
+    } finally {
+      if (isMounted.current) setSaving(false)
     }
-
-    setIsEditing(false)
   }
 
   const dailySummaryRows = SECTION_OPTIONS.map((section) => {
@@ -101,6 +256,8 @@ export function AttendancePage({ user, onBack, onSignOut }: AttendancePageProps)
   })
 
   const monthlyStats = monthlyStatsForSection(records, monthlySectionId, monthKey)
+
+  const selectedSectionLabel = sections.find((section) => section.id === browseSectionId)?.label ?? ''
 
   return (
     <DashboardShell onBack={onBack} onSignOut={onSignOut} mainClassName="mx-auto max-w-5xl px-6 py-12">
@@ -113,151 +270,194 @@ export function AttendancePage({ user, onBack, onSignOut }: AttendancePageProps)
       <section className="mt-8">
         <h2 className="text-sm font-semibold text-slate-700">Browse attendance</h2>
 
-        <div className="mt-3 flex flex-wrap items-end gap-4">
-          <div>
-            <label htmlFor="browse-section" className="block text-xs font-medium text-slate-700">
-              Class section
-            </label>
-            <select
-              id="browse-section"
-              value={browseSectionId}
-              onChange={(event) => setBrowseSectionId(event.target.value)}
-              className="mt-1.5 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-            >
-              {SECTION_OPTIONS.map((section) => (
-                <option key={section.id} value={section.id}>
-                  {sectionLabel(section)}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="browse-date" className="block text-xs font-medium text-slate-700">
-              Date
-            </label>
-            <input
-              id="browse-date"
-              type="date"
-              value={browseDate}
-              onChange={(event) => setBrowseDate(event.target.value)}
-              className="mt-1.5 block rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-            />
-          </div>
-
-          {browseRecord && !isEditing && (
-            <button
-              type="button"
-              onClick={startEditing}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50"
-            >
-              <Pencil className="size-3.5" />
-              Edit this day
-            </button>
-          )}
-
-          {browseRecord && isEditing && (
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={saveEditing}
-                className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-violet-700"
-              >
-                <Save className="size-3.5" />
-                Save changes
-              </button>
-              <button
-                type="button"
-                onClick={cancelEditing}
-                className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50"
-              >
-                <X className="size-3.5" />
-                Cancel
-              </button>
-            </div>
-          )}
-        </div>
-
-        {!browseRecord && (
-          <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
-            Not marked yet for {sectionLabel(SECTION_OPTIONS.find((s) => s.id === browseSectionId) ?? SECTION_OPTIONS[0])} on {formatDateLabel(browseDate)}.
-          </div>
+        {directoryStatus === 'loading' && <p className="mt-3 text-sm text-slate-500">Loading...</p>}
+        {directoryStatus === 'error' && (
+          <p role="alert" className="mt-3 text-sm text-red-600">
+            {directoryError}
+          </p>
         )}
 
-        {browseRecord && (
-          <div className="mt-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-xs text-slate-500">
-                <Lock className="size-3.5" />
-                Marked by {browseRecord.submittedBy} &middot; {formatDateTimeLabel(browseRecord.submittedAt)}
+        {directoryStatus === 'ready' && (
+          <>
+            <div className="mt-3 flex flex-wrap items-end gap-4">
+              <div>
+                <label htmlFor="browse-section" className="block text-xs font-medium text-slate-700">
+                  Class section
+                </label>
+                <select
+                  id="browse-section"
+                  value={browseSectionId}
+                  onChange={(event) => setBrowseSectionId(event.target.value)}
+                  disabled={saving}
+                  className="mt-1.5 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {sections.map((section) => (
+                    <option key={section.id} value={section.id}>
+                      {section.label}
+                    </option>
+                  ))}
+                </select>
               </div>
-              <div className="flex gap-2">
-                {ATTENDANCE_STATUSES.map((status) => (
-                  <AttendanceStatusBadge key={status.id} status={status.id} dot>
-                    {summarizeEntries(browseRecord.entries)[status.id]}
-                  </AttendanceStatusBadge>
-                ))}
+              <div>
+                <label htmlFor="browse-date" className="block text-xs font-medium text-slate-700">
+                  Date
+                </label>
+                <input
+                  id="browse-date"
+                  type="date"
+                  value={browseDate}
+                  onChange={(event) => setBrowseDate(event.target.value)}
+                  disabled={saving}
+                  className="mt-1.5 block rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 disabled:cursor-not-allowed disabled:opacity-60"
+                />
               </div>
+
+              {canEdit && !isEditing && (
+                <button
+                  type="button"
+                  onClick={startEditing}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50"
+                >
+                  <Pencil className="size-3.5" />
+                  Edit this day
+                </button>
+              )}
+
+              {canEdit && isEditing && (
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void saveEditing()}
+                    disabled={saving}
+                    className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Save className="size-3.5" />
+                    Save changes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelEditing}
+                    disabled={saving}
+                    className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <X className="size-3.5" />
+                    Cancel
+                  </button>
+                </div>
+              )}
             </div>
 
-            <AttendanceList>
-              {browseRoster.map((student) => {
-                const currentStatus = isEditing ? editDraft[student.id] : browseRecord.entries[student.id]
+            {saveError && (
+              <p role="alert" className="mt-3 text-sm text-red-600">
+                {saveError}
+              </p>
+            )}
 
-                return (
-                  <li key={student.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
-                    <div>
-                      <p className="text-sm font-medium text-slate-900">{student.name}</p>
-                      <p className="text-xs text-slate-400">Roll no. {student.rollNumber}</p>
+            {dayStatus === 'loading' && <p className="mt-4 text-sm text-slate-500">Loading...</p>}
+            {dayStatus === 'error' && (
+              <p role="alert" className="mt-4 text-sm text-red-600">
+                {dayError}
+              </p>
+            )}
+
+            {dayStatus === 'ready' && day && (
+              <>
+                {roster.length === 0 && (
+                  <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
+                    No students enrolled.
+                  </div>
+                )}
+
+                {roster.length > 0 && !day.submitted && (
+                  <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
+                    Not marked yet for {selectedSectionLabel} on {formatDateLabel(browseDate)}.
+                  </div>
+                )}
+
+                {roster.length > 0 && day.submitted && (
+                  <div className="mt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-xs text-slate-500">
+                        <Lock className="size-3.5" />
+                        {day.submittedBy && day.submittedAt && (
+                          <>
+                            Marked by {day.submittedBy.name} &middot; {formatDateTimeLabel(day.submittedAt)}
+                          </>
+                        )}
+                      </div>
+                      {browseCounts && (
+                        <div className="flex gap-2">
+                          {ATTENDANCE_STATUSES.map((status) => (
+                            <AttendanceStatusBadge key={status.id} status={status.id} dot>
+                              {browseCounts[status.id]}
+                            </AttendanceStatusBadge>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
-                    {isEditing ? (
-                      <div className="flex gap-1.5">
-                        {ATTENDANCE_STATUSES.map((status) => {
-                          const active = editDraft[student.id] === status.id
-                          return (
-                            <button
-                              key={status.id}
-                              type="button"
-                              onClick={() => setEditDraft((prev) => ({ ...prev, [student.id]: status.id }))}
-                              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
-                                active ? status.activeClass : 'border-slate-200 text-slate-500 hover:bg-slate-50'
-                              }`}
-                            >
-                              {status.label}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    ) : (
-                      currentStatus && <AttendanceStatusBadge status={currentStatus} />
-                    )}
-                  </li>
-                )
-              })}
-            </AttendanceList>
+                    <AttendanceList>
+                      {roster.map((entry) => {
+                        const currentStatus = isEditing ? editDraft[entry.student.id] : entry.status
 
-            {browseRecord.editLog.length > 0 && (
-              <div className="mt-4">
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500">
-                  <History className="size-3.5" />
-                  Edit log
-                </div>
-                <ul className="mt-2 space-y-1.5">
-                  {[...browseRecord.editLog].reverse().map((edit, index) => {
-                    const student = browseRoster.find((candidate) => candidate.id === edit.studentId)
-                    return (
-                      <li key={index} className="text-xs text-slate-500">
-                        {edit.editedBy} changed {student?.name ?? 'a student'} from{' '}
-                        <span className="font-medium text-slate-700">{statusInfo(edit.from).label}</span> to{' '}
-                        <span className="font-medium text-slate-700">{statusInfo(edit.to).label}</span> on{' '}
-                        {formatDateTimeLabel(edit.editedAt)}.
-                      </li>
-                    )
-                  })}
-                </ul>
-              </div>
+                        return (
+                          <li key={entry.student.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
+                            <p className="text-sm font-medium text-slate-900">{entry.student.name}</p>
+
+                            {isEditing ? (
+                              <div className="flex gap-1.5">
+                                {ATTENDANCE_STATUSES.map((status) => {
+                                  const active = editDraft[entry.student.id] === status.id
+                                  return (
+                                    <button
+                                      key={status.id}
+                                      type="button"
+                                      onClick={() =>
+                                        setEditDraft((prev) => ({ ...prev, [entry.student.id]: status.id }))
+                                      }
+                                      className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                                        active ? status.activeClass : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+                                      }`}
+                                    >
+                                      {status.label}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            ) : (
+                              currentStatus && <AttendanceStatusBadge status={currentStatus} />
+                            )}
+                          </li>
+                        )
+                      })}
+                    </AttendanceList>
+
+                    {day.edits && day.edits.length > 0 && (
+                      <div className="mt-4">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+                          <History className="size-3.5" />
+                          Edit log
+                        </div>
+                        <ul className="mt-2 space-y-1.5">
+                          {[...day.edits].reverse().map((edit) => {
+                            const student = roster.find((entry) => entry.student.id === edit.studentId)?.student
+                            return (
+                              <li key={`${edit.studentId}-${edit.editedAt}`} className="text-xs text-slate-500">
+                                {editorNameFor(edit, user)} changed {student?.name ?? 'a student'} from{' '}
+                                <span className="font-medium text-slate-700">{statusInfo(edit.fromStatus).label}</span>{' '}
+                                to <span className="font-medium text-slate-700">{statusInfo(edit.toStatus).label}</span>{' '}
+                                on {formatDateTimeLabel(edit.editedAt)}.
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
             )}
-          </div>
+          </>
         )}
       </section>
 

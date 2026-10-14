@@ -243,6 +243,7 @@ export class AttendanceService {
                 fromStatus: true,
                 toStatus: true,
                 editedById: true,
+                editedBy: { select: { id: true, name: true } },
                 editedAt: true,
               },
               orderBy: { editedAt: 'asc' },
