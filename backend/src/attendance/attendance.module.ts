@@ -1,9 +1,13 @@
 import { Module } from '@nestjs/common';
-import { AttendanceAdminController, AttendanceController } from './attendance.controller.js';
+import {
+  AttendanceAdminController,
+  AttendanceController,
+  AttendanceReportsController,
+} from './attendance.controller.js';
 import { AttendanceService } from './attendance.service.js';
 
 @Module({
-  controllers: [AttendanceController, AttendanceAdminController],
+  controllers: [AttendanceController, AttendanceAdminController, AttendanceReportsController],
   providers: [AttendanceService],
 })
 export class AttendanceModule {}

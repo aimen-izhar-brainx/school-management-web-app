@@ -17,8 +17,11 @@ const LOCKED =
   'Attendance for this date is locked: only today\'s attendance can be submitted or edited.';
 const NOT_MARKED_YET =
   'Attendance for this section and date is not marked yet, so there is nothing to edit.';
+const SECTION_ID_REQUIRED = 'sectionId query parameter is required.';
+const BAD_MONTH_FORMAT = 'month must be a valid calendar month in YYYY-MM format.';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MONTH_RE = /^\d{4}-\d{2}$/;
 
 export type AttendanceEntryInput = { studentId: string; status: AttendanceStatus };
 
@@ -193,6 +196,107 @@ export class AttendanceService {
     return this.loadResponse(sectionId, dateStr, { includeEdits: true });
   }
 
+  // T-036: admin-only daily summary report (UC-08) — one row per `Section` in the whole school.
+  // A section with a recorded session for the date gets its entries' statuses summarized
+  // (AC-08.1); a section with no session that date gets `summary: null` instead of zeros, so the
+  // frontend (T-037) can render "Not marked yet" rather than implying a confirmed empty day.
+  // Zero sections in the school → `[]` (UC-08-E2), no crash.
+  //
+  // Status counts are computed DB-side via `groupBy`/`_count` (grouped by `sessionId` + `status`,
+  // since `sectionId` only lives on the parent `AttendanceSession`, not on `AttendanceEntry`
+  // itself) rather than pulling every entry row and counting in JS — only aggregated counts cross
+  // the wire, which matters here since this report scans every section in the school.
+  async dailyReport(dateStr: string) {
+    this.assertValidDateFormat(dateStr);
+    const date = this.toDateOnly(dateStr);
+
+    const sections = await this.prisma.section.findMany({
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    if (sections.length === 0) return [];
+
+    const sessions = await this.prisma.attendanceSession.findMany({
+      where: { date, sectionId: { in: sections.map((s) => s.id) } },
+      select: { id: true, sectionId: true },
+    });
+    if (sessions.length === 0) {
+      return sections.map((section) => ({ section, summary: null }));
+    }
+
+    const sectionIdBySessionId = new Map(sessions.map((s) => [s.id, s.sectionId]));
+    const grouped = await this.prisma.attendanceEntry.groupBy({
+      by: ['sessionId', 'status'],
+      where: { sessionId: { in: sessions.map((s) => s.id) } },
+      _count: true,
+    });
+
+    // Every section with a recorded session starts at all-zero counts, so a status with zero
+    // entries (e.g. no leaves that day) still reports `0` rather than being absent from the
+    // grouped result.
+    const summaryBySectionId = new Map<string, Record<AttendanceStatus, number>>(
+      sessions.map((s) => [s.sectionId, { present: 0, absent: 0, leave: 0 }]),
+    );
+    for (const row of grouped) {
+      const sectionId = sectionIdBySessionId.get(row.sessionId);
+      if (!sectionId) continue;
+      summaryBySectionId.get(sectionId)![row.status] = row._count;
+    }
+
+    return sections.map((section) => {
+      const summary = summaryBySectionId.get(section.id);
+      return summary ? { section, summary } : { section, summary: null };
+    });
+  }
+
+  // T-036: admin-only monthly percentage report (UC-09) — one row per student currently enrolled
+  // in the section, scanning that section's sessions within the given month. `markedDays` only
+  // counts days with an actual recorded `AttendanceEntry` for that student, so a student added
+  // partway through the month isn't penalized for days before they were ever on a submitted
+  // roster (AC-09.3 — naturally true since entries only exist for sessions submitted while the
+  // student was enrolled). `percentage` is `null`, not a number, when `markedDays === 0` (AC-09.1).
+  //
+  // Status counts are computed DB-side via `groupBy`/`_count` (grouped by `studentId` + `status`,
+  // filtered to this section+month via the `session` relation) rather than pulling every entry
+  // row for the month and counting in JS — only aggregated counts cross the wire.
+  async monthlyReport(sectionId: string, monthStr: string) {
+    if (!sectionId) throw new BadRequestException(SECTION_ID_REQUIRED);
+    await this.findSection(sectionId);
+    const { start, end } = this.assertValidMonthFormat(monthStr);
+
+    const students = await this.prisma.user.findMany({
+      where: { sectionId, role: 'student' },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    if (students.length === 0) return [];
+
+    const grouped = await this.prisma.attendanceEntry.groupBy({
+      by: ['studentId', 'status'],
+      where: { session: { sectionId, date: { gte: start, lt: end } } },
+      _count: true,
+    });
+
+    const countsByStudentId = new Map<string, Record<AttendanceStatus, number>>();
+    for (const row of grouped) {
+      const counts =
+        countsByStudentId.get(row.studentId) ?? { present: 0, absent: 0, leave: 0 };
+      counts[row.status] = row._count;
+      countsByStudentId.set(row.studentId, counts);
+    }
+
+    return students.map((student) => {
+      const counts = countsByStudentId.get(student.id) ?? { present: 0, absent: 0, leave: 0 };
+      const markedDays = counts.present + counts.absent + counts.leave;
+      return {
+        student,
+        ...counts,
+        markedDays,
+        percentage: markedDays > 0 ? Math.round((counts.present / markedDays) * 100) : null,
+      };
+    });
+  }
+
   // Unchanged from T-032: PUT keeps returning the bare `{ studentId, status }` shape (a session
   // always exists by the time this runs, right after submit/edit) — only the GET contract below
   // was extended for T-033's roster gap.
@@ -347,6 +451,18 @@ export class AttendanceService {
     const valid =
       dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
     if (!valid) throw new BadRequestException(BAD_DATE_FORMAT);
+  }
+
+  // Returns the month's inclusive start / exclusive end as UTC-midnight `Date`s, matching how
+  // `toDateOnly()` stores session dates — so `{ gte: start, lt: end }` lines up exactly with the
+  // stored `date` column regardless of which day of the month it falls on.
+  private assertValidMonthFormat(monthStr: string): { start: Date; end: Date } {
+    if (!MONTH_RE.test(monthStr)) throw new BadRequestException(BAD_MONTH_FORMAT);
+    const [y, m] = monthStr.split('-').map(Number);
+    if (m < 1 || m > 12) throw new BadRequestException(BAD_MONTH_FORMAT);
+    const start = new Date(Date.UTC(y, m - 1, 1));
+    const end = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1));
+    return { start, end };
   }
 
   private assertIsToday(dateStr: string) {

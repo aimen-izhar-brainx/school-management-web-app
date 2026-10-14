@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Put, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import type { JwtPayload } from '../auth/jwt.strategy.js';
@@ -56,5 +56,25 @@ export class AttendanceAdminController {
     @Req() req: Request & { user: JwtPayload },
   ) {
     return this.attendance.editAsAdmin(sectionId, date, dto.entries, req.user.sub);
+  }
+}
+
+// T-036: admin-only reporting endpoints — a dedicated `/attendance/reports/...` path (rather than
+// nesting under `/attendance/admin/sections/:sectionId/days` above) since these summarize across
+// sections (daily) or a whole month (monthly), not a single section+day.
+@Controller('attendance/reports')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin')
+export class AttendanceReportsController {
+  constructor(private readonly attendance: AttendanceService) {}
+
+  @Get('daily')
+  daily(@Query('date') date: string) {
+    return this.attendance.dailyReport(date);
+  }
+
+  @Get('monthly')
+  monthly(@Query('sectionId') sectionId: string, @Query('month') month: string) {
+    return this.attendance.monthlyReport(sectionId, month);
   }
 }

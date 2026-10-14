@@ -1,11 +1,11 @@
 ---
-diff_hash: c1fc2d01e6e53c52287c4d13b9866ece23372a4e83c1c1125794238831cca423
-reviewed_at: 2026-10-14T12:00:00Z
+diff_hash: 2d6900f6878bd90e02f22eac33bf435e4758b43c13b3947814164b64a7813cec
+reviewed_at: 2026-10-14T11:23:38Z
 ---
 
 ## Summary
 
-T-035: rewires the "Browse & edit" section of the admin `AttendancePage` (React 19) to the real T-034 endpoints. It loads classes and sections, fetches a day with `GET /attendance/admin/sections/:id/days/:date`, edits through `PATCH`, and renders the audit "Edit log". On the backend, `loadResponse` additively returns `editedBy: { id, name }` on each audit row, and the existing admin edit spec asserts it. The frontend tests are rewritten to match, and the ticket and status docs are updated. Stacks: React (frontend) and NestJS + Prisma (backend). This is a single repo, so there is no cross-repo contract risk. The frontend's `editedBy?` is optional and the backend change is additive, so the two sides stay compatible. The two report tables still use mock data (T-037's scope).
+Adds two admin-only attendance report endpoints under `/api/attendance/reports` (daily per-section summary, monthly per-student percentage) in the NestJS backend, with real-DB integration specs and ticket/status bookkeeping for T-036. Auth/role guards are applied at controller level, inputs are validated in the service, and the logic matches the ticket's acceptance criteria. Stack: NestJS (backend only; no cross-repo contract change in this diff).
 
 ## Findings
 
@@ -13,37 +13,30 @@ T-035: rewires the "Browse & edit" section of the admin `AttendancePage` (React 
 
 ### High (0)
 
-### Medium (3)
-- **frontend/src/components/AttendancePage.tsx:165-169** — When the date input is cleared, the effect returns early without resetting `day`, `dayStatus` or `isEditing`. The previous day's roster stays on screen with `canEdit` still true. Clicking "Edit this day" and then "Save changes" sends `PATCH .../days/` with an empty date, which is a malformed URL. If the admin was already editing when they cleared the date, edit mode also stays active. The guard avoids the bad GET but not the bad PATCH, and the UI shows data that doesn't match the selected date. *(correctness)*
+### Medium (2)
+- **backend/src/attendance/attendance-report-daily.spec.ts:162** — The UC-08-E2 test runs `prisma.section.deleteMany({})`, deleting every Section (and cascading to dependent rows) in whatever database the tests point at, not just this run's PREFIX-scoped rows. If `DATABASE_URL` is a dev/shared DB, running the suite destroys real data. *(correctness / test-safety)*
   - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: Fixed. The invalid-date branch of the load effect now also clears the loaded day (`setDay(null)`, `setDayStatus('idle')`, `setIsEditing(false)`), so a cleared date resets the view instead of leaving stale data interactive. `canEdit` and `saveEditing` are additionally gated on `isValidDateKey(browseDate)` as a second guard, so a save can never fire with an invalid date even if some other path left `isEditing` true. Covered by two new tests.
-- **frontend/src/components/AttendancePage.tsx:141-145** — The directory load issues one `GET /classes/:id/sections` per class, all at once with `Promise.all`, on every page mount. This N+1 fan-out grows with the number of classes. A single failed request rejects the whole load, so the section picker never appears. *(performance)*
-  - status: skipped
-  - dev_reasoning: Same pattern already explicitly reviewed and accepted (status: skipped) for T-033's equivalent code in MarkAttendancePage.tsx — see `.code-reviews/records/5679fa158fa443718f0637643fd26a219843d0b3.md`: "Intentionally matches the existing fan-out pattern already used by TimetablePage.tsx for the same `/classes` + per-class `/sections` lookup — this ticket's own technical notes specify reusing that exact pattern. A dedicated 'my sections' endpoint would be a reasonable follow-up but is a new backend surface, out of scope for this ticket." This T-035 finding is the identical fan-out applied to the admin's unfiltered picker rather than the teacher's filtered one — the established, already-accepted pattern for this codebase, not new scope creep.
-  - ai_reasoning: Acceptable for now, consistent with the T-033 precedent. A dedicated "sections" endpoint (filtered or unfiltered) would remove the fan-out but is out of scope here.
-- **frontend/src/components/AttendancePage.tsx:100-585** — `AttendancePage` is now ~485 lines and mixes real-API browse/edit state (about 15 `useState`/`useRef` hooks plus three async flows) with two mock-backed report sections. This is well above the ~150-200 line guideline. The directory-loading effect and the day-loading effect are hand-rolled with request-id refs. The same pattern probably exists in `MarkAttendancePage`, so it likely belongs in a shared hook. *(maintainability)*
-  - status: skipped
-  - dev_reasoning: Valid observation, but T-037 (the very next ticket, already written — see tickets/T-037.md) touches this exact same file next to wire the two still-mocked report sections to real APIs too. Extracting a shared component/hook now, before T-037 lands, risks a premature refactor of code that's about to change again. Deferring the extraction decision until after T-037, when the full picture of the file's real-API-backed shape is known, avoids redoing the extraction.
-  - ai_reasoning: Reasonable to defer. Revisit the extraction (e.g. `AdminAttendanceBrowser` component or `useAdminAttendanceDay` hook) once T-037 lands and the file's full real-API shape is settled.
+  - dev_reasoning: Added a defensive guard immediately before the `deleteMany` that parses the database name out of `DATABASE_URL` and throws loudly unless it matches `/test/i` (matching the `_test` suffix convention used in `backend/.env`, e.g. `school_management_test`). Kept the existing test structure/PREFIX-scoping as-is — this is defense-in-depth on top of it, not a redesign.
+  - ai_reasoning: N/A
 
-### Low (2)
-- **frontend/src/components/AttendancePage.tsx:431** — The edit log list uses the array index as its `key`. The list is reversed and fully replaced after each save, so the keys are not stable identities. This causes no functional issue today because the rows have no local state. *(consistency)*
+- **backend/src/attendance/attendance.service.ts:214** — Aggregation is done in JS by loading every `AttendanceEntry` row (daily: all entries for every section on the date; monthly: all entries for the section-month) and counting with loops, instead of `groupBy`/`_count` in the database. *(performance)*
   - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: Fixed. The edit log list now keys each row with a composite `${edit.studentId}-${edit.editedAt}` instead of the array index.
-- **backend/tsconfig.build.tsbuildinfo:1** — A generated TypeScript incremental build artifact is tracked in git and modified in this diff, which adds noise to reviews and can cause merge conflicts. *(maintainability)*
+  - dev_reasoning: Rewrote both `dailyReport` and `monthlyReport` to use `prisma.attendanceEntry.groupBy({ by: [...], where, _count: true })` instead of `findMany` + JS loops. `dailyReport` groups by `sessionId`+`status` (sectionId isn't a field on `AttendanceEntry`, only on its parent `AttendanceSession`, so sessions are fetched separately with their `sectionId` and used to map grouped counts back to sections); `monthlyReport` groups by `studentId`+`status` filtered through the `session` relation. Response shape/values are unchanged (verified via the existing specs, including AC-09.1's non-integer-rounding case and AC-09.3's partial-month-enrollment case).
+  - ai_reasoning: N/A
+
+### Low (1)
+- **backend/src/attendance/attendance.controller.ts:72** — `@Query('date')` / `@Query('sectionId')` / `@Query('month')` are raw untyped strings validated ad hoc in the service rather than via DTOs with `class-validator`; `dailyReport(date)` with a missing param relies on the regex failing on `undefined`. *(consistency / validation)*
   - status: skipped
-  - dev_reasoning: Same recurring pre-existing finding already skipped with reason in prior tickets (T-033, T-034): pre-existing tracked build artifact from before this ticket; untracking it is an unrelated repo-hygiene change out of scope here.
-  - ai_reasoning: Untrack it with `git rm --cached` and add `*.tsbuildinfo` to `.gitignore`, in a dedicated repo-hygiene change.
+  - dev_reasoning: Matches the existing ad hoc query/path-param validation pattern already used elsewhere in this controller (e.g. the admin `:date`/`:sectionId` path params); introducing DTOs here only would be inconsistent — a broader DTO migration across the whole attendance module is out of scope for this ticket.
+  - ai_reasoning: N/A
 
 ## Reviewed files
-- .code-reviews/brainx-review.md (previous review, removed in the staged diff; replaced by this one)
-- backend/src/attendance/attendance-admin-edit.spec.ts
+- .code-reviews/brainx-review.md (deleted — previous review artifact)
+- backend/src/attendance/attendance-report-daily.spec.ts
+- backend/src/attendance/attendance-report-monthly.spec.ts
+- backend/src/attendance/attendance.controller.ts
+- backend/src/attendance/attendance.module.ts
 - backend/src/attendance/attendance.service.ts
-- backend/tsconfig.build.tsbuildinfo (generated, skimmed)
-- frontend/src/components/AttendancePage.largeRoster.test.tsx (skimmed)
-- frontend/src/components/AttendancePage.test.tsx (skimmed)
-- frontend/src/components/AttendancePage.tsx
-- tickets/STATUS.md (docs, skimmed)
-- tickets/T-035.md (docs, skimmed)
+- backend/tsconfig.build.tsbuildinfo (skipped — generated build artifact)
+- tickets/STATUS.md
+- tickets/T-036.md
