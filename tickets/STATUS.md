@@ -26,5 +26,5 @@
 | T-035 | Wire AttendancePage browse & edit + audit log to real API (frontend) | DONE | 2 | extended T-034's GET with editedBy{id,name}; try 2 added AC-05.3/AC-06.1 assertions on it; fixed fixture name collision + modernized largeRoster regression test |
 | T-036 | Daily summary + monthly percentage report endpoints (backend) | DONE | 2 | try 2 added 403 tests; pre-commit review fixed unguarded deleteMany({}) in test (test-DB-name guard) + JS-side aggregation (groupBy/_count) |
 | T-037 | Wire AttendancePage report tables to real API (frontend) | IN-PROGRESS | 2 | try 2 fixed blank-on-mount; pre-commit review found stale-request race on clear + missing idle/empty states |
-| T-038 | GET /attendance/me endpoint (backend) | TODO | 0 | |
+| T-038 | GET /attendance/me endpoint (backend) | DONE | 2 | try 2: dropped sectionId filter from entries query (was dropping history after a section move) |
 | T-039 | Wire MyAttendancePage for students to real API (frontend) | TODO | 0 | |

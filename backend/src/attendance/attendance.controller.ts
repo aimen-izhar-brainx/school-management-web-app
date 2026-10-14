@@ -34,6 +34,22 @@ export class AttendanceController {
   }
 }
 
+// T-038: a logged-in student's own monthly attendance (UC-10, UC-11). Deliberately its own
+// `@Controller('attendance')` + `@Get('me')` (rather than a param on the teacher/admin controllers
+// above) so the route takes no student/section id parameter at all — `req.user.sub` is the only
+// source of identity, so there is nothing for a client to override to target another student.
+@Controller('attendance')
+@UseGuards(JwtAuthGuard, RolesGuard)
+export class AttendanceMeController {
+  constructor(private readonly attendance: AttendanceService) {}
+
+  @Get('me')
+  @Roles('student')
+  getMine(@Query('month') month: string, @Req() req: Request & { user: JwtPayload }) {
+    return this.attendance.getMine(req.user.sub, month);
+  }
+}
+
 // T-034: kept as a separate `/attendance/admin/...` route (rather than overloading the M1
 // teacher route above) so `@Roles('admin')` vs `@Roles('teacher')` guards stay simple and
 // AC-07.1/AC-07.2 are trivial route-level checks — no ownership check is performed here at all.

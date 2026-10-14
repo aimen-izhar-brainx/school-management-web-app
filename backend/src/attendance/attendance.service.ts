@@ -297,6 +297,49 @@ export class AttendanceService {
     });
   }
 
+  // T-038: student-only "my attendance" endpoint (UC-10, UC-11) — `studentId` comes only from the
+  // JWT (`req.user.sub`) at the controller level, never from a route/query parameter, so there is
+  // nothing for a client to override to target another student (AC-11.1). If the caller has no
+  // `sectionId` yet, this mirrors `GET /timetable/me`'s student-with-no-section shape rather than
+  // erroring (ticket's Technical notes / timetable-me.spec.ts's AC-20.1). Otherwise, days with no
+  // recorded entry for this student are simply absent from `entries` (AC-10.3) — not fetched via a
+  // day-by-day roster scan, just whichever `AttendanceEntry` rows exist for them this month.
+  async getMine(studentId: string, monthStr: string) {
+    const { start, end } = this.assertValidMonthFormat(monthStr);
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: studentId },
+      select: { section: { select: { id: true, name: true } } },
+    });
+    if (!user?.section) {
+      return { section: null, entries: [], present: 0, absent: 0, leave: 0, percentage: null };
+    }
+
+    // `studentId` alone already guarantees ownership (a student can only ever see their own
+    // entries) — the entries query is intentionally NOT filtered by the student's current
+    // section, since a student moved to a different section mid-month must still see their own
+    // entries recorded under their previous section for that month.
+    const rows = await this.prisma.attendanceEntry.findMany({
+      where: { studentId, session: { date: { gte: start, lt: end } } },
+      select: { status: true, session: { select: { date: true } } },
+      orderBy: { session: { date: 'asc' } },
+    });
+
+    const counts: Record<AttendanceStatus, number> = { present: 0, absent: 0, leave: 0 };
+    const entries = rows.map((row) => {
+      counts[row.status]++;
+      return { date: row.session.date, status: row.status };
+    });
+    const markedDays = counts.present + counts.absent + counts.leave;
+
+    return {
+      section: user.section,
+      entries,
+      ...counts,
+      percentage: markedDays > 0 ? Math.round((counts.present / markedDays) * 100) : null,
+    };
+  }
+
   // Unchanged from T-032: PUT keeps returning the bare `{ studentId, status }` shape (a session
   // always exists by the time this runs, right after submit/edit) — only the GET contract below
   // was extended for T-033's roster gap.
