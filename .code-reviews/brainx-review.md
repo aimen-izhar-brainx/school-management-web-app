@@ -1,15 +1,11 @@
 ---
-diff_hash: 6e7f33c52842
-branch: claude/attendance-management-f4596f
-author: brainxtechnologies
-reviewed_at: 2026-10-14T13:09:21Z
-stack: nestjs
-resolved_count: 0
+diff_hash: 3c2850c8386c200ee1d755da5776175025757592f156721fc043aab6a8cd99e5
+reviewed_at: 2026-10-14T13:36:35Z
 ---
 
 ## Summary
 
-Backend-only change (T-038, NestJS 12 + Prisma 7): adds `GET /api/attendance/me?month=YYYY-MM` via a new `AttendanceMeController` (`@Roles('student')`, identity taken only from `req.user.sub`) and `AttendanceService.getMine`, which returns the student's own entries for the month with present/absent/leave counts and a rounded percentage (same formula as the T-036 monthly report; `null` when nothing is marked). A student with no section gets `{ section: null, entries: [], 0, 0, 0, null }`. A new real-DB spec covers AC-10.1/10.3, AC-11.1/11.2, UC-11-E1, the no-section case and 401/403 access control. Ticket/status bookkeeping is updated; the previous `.code-reviews/brainx-review.md` (T-037) is deleted in the index. No frontend files are in this diff, so there is no cross-repo contract change (T-039 will consume this response shape later). Auth/authz is sound: route has no id parameter, guards are applied, and the query is scoped by `studentId` from the JWT; month input is validated by the shared `assertValidMonthFormat`.
+T-039: wires the student branch of `MyAttendancePage` to the real `GET /attendance/me?month=` endpoint (T-038) with loading / error / "not assigned to a class" states and a stale-response guard; the parent branch stays on mock data and never calls the API. Tests are rewritten to mock the HTTP layer. Ticket/status docs updated; the previous review file is removed (finalized in the last commit). Stack: React (frontend only; no backend changes in this diff, so no cross-repo contract change).
 
 ## Findings
 
@@ -18,22 +14,24 @@ Backend-only change (T-038, NestJS 12 + Prisma 7): adds `GET /api/attendance/me?
 ### High (0)
 
 ### Medium (1)
-- **backend/src/attendance/attendance.service.ts:319** — The entries query filters on `session: { sectionId: user.section.id }` (the student's *current* section) in addition to `studentId`. The `studentId` filter already guarantees ownership, so the section filter adds no security value but silently drops the student's own recorded attendance for any session in a previous section: if a student is moved to another section mid-month, their earlier entries vanish from `entries` and from the counts/percentage, making the percentage inaccurate. *(correctness)*
-  - status: open
-  - dev_reasoning: N/A
-  - ai_reasoning: Drop `sectionId` from the `where` (keep `studentId` + the month range), or, if scoping to the current section is intended, document that decision in the ticket/use cases and add a test for the moved-student case.
+- **frontend/src/components/MyAttendancePage.tsx:150** — When the month input is cleared, the fetch effect returns early without resetting `status`/`response`, so the previous month's stats and entries stay on screen while the list heading calls `monthLabel('')` (which renders "Invalid Date"). A request already in flight when the input is cleared can also still resolve and overwrite the view. The guard should also clear the displayed data (or the render should hide the body) and invalidate the in-flight request. *(correctness)*
+  - status: fixed
+  - dev_reasoning: Invalid-month-key early return now also bumps `latestRequest.current` (so any in-flight request for the previous valid month is discarded on resolve) and resets `response` to `null` and `status` to `idle`, matching the idiom already used in `AttendancePage.tsx`'s report-table effects. Added a regression test mirroring `AttendancePage.test.tsx`'s "stale-request race guard" tests: clears the month mid-flight, resolves the stale response, and asserts it does not repopulate the view and no "Invalid Date" text appears.
+  - ai_reasoning: N/A
 
-### Low (1)
-- **backend/src/attendance/attendance-me.spec.ts:11** — The header comment says the endpoint "does not exist yet (T-038 is not built)" and that every `/attendance/me` request is "expected to currently fail with 404". This is now stale: the endpoint is implemented in this same diff, so the comment misleads future readers. *(maintainability)*
-  - status: open
-  - dev_reasoning: N/A
-  - ai_reasoning: Remove or reword that paragraph (keep the note that the route takes no id parameter).
+### Low (2)
+- **frontend/src/components/MyAttendancePage.tsx:55** — `useLinkedStudent` (plus the mock section/entries/percentage computation and the `records` state) runs for every role, including students who use the real API, so the mock lookup is wasted work and obscures which branch owns which data. *(maintainability)*
+  - status: skipped
+  - dev_reasoning: Per this ticket's own explicit instruction, the parent branch (and its mock data plumbing) must stay completely untouched/unwired — isolating it into its own component to avoid the wasted computation for students is a larger structural change than this ticket's scope allows; the wasted work itself has no correctness or security impact.
+  - ai_reasoning: N/A
+- **frontend/src/components/MyAttendancePage.tsx:134** — The separate `isMounted` ref duplicates what `latestRequest` can do; bumping `latestRequest.current` in the effect cleanup would cover both unmount and superseded requests with one mechanism. *(maintainability)*
+  - status: skipped
+  - dev_reasoning: This dual-guard (isMounted + latestRequest) pattern is already used identically and already reviewed/approved in this codebase's other wired pages (MarkAttendancePage.tsx, AttendancePage.tsx) from earlier tickets in this same build — consolidating it is a cross-cutting refactor affecting multiple already-shipped files, out of scope for this ticket.
+  - ai_reasoning: N/A
 
 ## Reviewed files
-- .code-reviews/brainx-review.md (deleted in index — previous review artifact; rewritten by this review)
-- backend/src/attendance/attendance-me.spec.ts
-- backend/src/attendance/attendance.controller.ts
-- backend/src/attendance/attendance.module.ts
-- backend/src/attendance/attendance.service.ts
-- tickets/STATUS.md
-- tickets/T-038.md
+- frontend/src/components/MyAttendancePage.tsx
+- frontend/src/components/MyAttendancePage.test.tsx
+- tickets/STATUS.md (docs)
+- tickets/T-039.md (docs)
+- .code-reviews/brainx-review.md (deleted previous review; skipped)
