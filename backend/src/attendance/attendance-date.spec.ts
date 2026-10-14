@@ -108,7 +108,15 @@ describe('PUT /api/attendance/sections/:sectionId/days/:date — today-only rule
       expect(res.status).toBeGreaterThanOrEqual(400);
       expect(res.status).toBeLessThan(500);
 
-      await getAttendance(section.id, yesterdayStr(), auth).expect(404);
+      // No session exists for that date — GET reports the section's roster as not-yet-submitted
+      // rather than 404ing, so the teacher's screen always has a roster to render.
+      const getRes = await getAttendance(section.id, yesterdayStr(), auth).expect(200);
+      expect(getRes.body.submitted).toBe(false);
+      expect(getRes.body.locked).toBe(true);
+      expect(getRes.body.entries).toHaveLength(students.length);
+      expect(
+        (getRes.body.entries as { status: string | null }[]).every((e) => e.status === null),
+      ).toBe(true);
       expect(await prisma.attendanceSession.count({ where: { sectionId: section.id } })).toBe(0);
     });
 
@@ -125,7 +133,13 @@ describe('PUT /api/attendance/sections/:sectionId/days/:date — today-only rule
       expect(res.status).toBeGreaterThanOrEqual(400);
       expect(res.status).toBeLessThan(500);
 
-      await getAttendance(section.id, tomorrowStr(), auth).expect(404);
+      const getRes = await getAttendance(section.id, tomorrowStr(), auth).expect(200);
+      expect(getRes.body.submitted).toBe(false);
+      expect(getRes.body.locked).toBe(true);
+      expect(getRes.body.entries).toHaveLength(students.length);
+      expect(
+        (getRes.body.entries as { status: string | null }[]).every((e) => e.status === null),
+      ).toBe(true);
       expect(await prisma.attendanceSession.count({ where: { sectionId: section.id } })).toBe(0);
     });
 

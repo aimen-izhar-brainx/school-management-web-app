@@ -21,7 +21,7 @@
 | T-030 | Reject invalid timetable entries (backend) | DONE | 1 | |
 | T-031 | Block Parent role from Academic Management (backend + frontend) | DONE | 1 | user: no parent entry to My Timetable (safety-net page only) |
 | T-032 | Attendance data model + teacher mark/edit endpoints (backend) | DONE | 2 | try 2: pre-commit review fixed dup studentId 500, UTC vs local "today", roster check outside tx |
-| T-033 | Wire MarkAttendancePage to real API, with same-day re-edit (frontend) | TODO | 0 | |
+| T-033 | Wire MarkAttendancePage to real API, with same-day re-edit (frontend) | DONE | 3 | extended T-032's GET contract (roster+names, 200 not 404); try 2 fixed locked:false bug + test; pre-commit review fixed save race, roster ordering, empty-date, 500-vs-404 |
 | T-034 | Admin attendance edit (audited) + browse endpoint (backend) | TODO | 0 | |
 | T-035 | Wire AttendancePage browse & edit + audit log to real API (frontend) | TODO | 0 | |
 | T-036 | Daily summary + monthly percentage report endpoints (backend) | TODO | 0 | |

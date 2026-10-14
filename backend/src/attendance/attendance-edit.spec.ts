@@ -109,8 +109,17 @@ describe("PUT /api/attendance/sections/:sectionId/days/:date — same-day edit (
       ).expect(200);
 
       const res = await getAttendance(section.id, todayStr(), auth).expect(200);
-      // Ticket's documented M1 response shape — no edit/audit log field is exposed here.
-      expect(Object.keys(res.body).sort()).toEqual(['entries', 'locked', 'submittedAt', 'submittedBy']);
+      // Ticket's documented M1 response shape — `edits` is always present but stays empty here;
+      // the real audit log (populated by admin PATCH edits) lands in T-034.
+      expect(Object.keys(res.body).sort()).toEqual([
+        'edits',
+        'entries',
+        'locked',
+        'submitted',
+        'submittedAt',
+        'submittedBy',
+      ]);
+      expect(res.body.edits).toEqual([]);
 
       // AttendanceEdit doesn't exist until T-034 (so there's nowhere to log to yet); once it
       // does exist, this asserts zero rows were written for the teacher's own same-day edit.

@@ -103,7 +103,10 @@ describe('PUT/GET /api/attendance/sections/:sectionId/days/:date — first submi
 
       const res = await getAttendance(section.id, todayStr(), auth).expect(200);
       const byId = new Map(
-        (res.body.entries as { studentId: string; status: string }[]).map((e) => [e.studentId, e.status]),
+        (res.body.entries as { student: { id: string }; status: string }[]).map((e) => [
+          e.student.id,
+          e.status,
+        ]),
       );
       expect(byId.get(students[0].id)).toBe('absent');
       expect(byId.get(students[1].id)).toBe('leave');

@@ -4,8 +4,8 @@ import type { AttendanceStatus } from '../generated/prisma/enums.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 const SECTION_NOT_FOUND = 'This section no longer exists.';
+const SESSION_NOT_FOUND = 'This attendance session no longer exists.';
 const NOT_CLASS_TEACHER = 'You are not the class teacher for this section.';
-const SESSION_NOT_FOUND = 'No attendance has been submitted for this day yet.';
 const BAD_DATE_FORMAT = 'Date must be a valid calendar date in YYYY-MM-DD format.';
 const LOCKED =
   'Attendance for this date is locked: only today\'s attendance can be submitted or edited.';
@@ -47,7 +47,7 @@ export class AttendanceService {
       });
     });
 
-    return this.loadResponse(sectionId, dateStr);
+    return this.loadSubmitResponse(sectionId, dateStr);
   }
 
   async get(sectionId: string, dateStr: string, callerId: string) {
@@ -57,7 +57,10 @@ export class AttendanceService {
     return this.loadResponse(sectionId, dateStr);
   }
 
-  private async loadResponse(sectionId: string, dateStr: string) {
+  // Unchanged from T-032: PUT keeps returning the bare `{ studentId, status }` shape (a session
+  // always exists by the time this runs, right after submit/edit) — only the GET contract below
+  // was extended for T-033's roster gap.
+  private async loadSubmitResponse(sectionId: string, dateStr: string) {
     const date = this.toDateOnly(dateStr);
     const session = await this.prisma.attendanceSession.findUnique({
       where: { sectionId_date: { sectionId, date } },
@@ -73,6 +76,51 @@ export class AttendanceService {
       submittedBy: session.submittedBy,
       submittedAt: session.submittedAt,
       locked: dateStr !== this.todayStr(),
+    };
+  }
+
+  // T-033: extends the GET response with full student names and, when no session exists yet,
+  // the section's complete roster (status: null per student) instead of a bare 404 — closing the
+  // gap where there was previously no teacher-accessible way to enumerate a section's roster.
+  private async loadResponse(sectionId: string, dateStr: string) {
+    const date = this.toDateOnly(dateStr);
+    const session = await this.prisma.attendanceSession.findUnique({
+      where: { sectionId_date: { sectionId, date } },
+      select: {
+        submittedAt: true,
+        submittedBy: { select: { id: true, name: true } },
+        entries: {
+          select: { status: true, student: { select: { id: true, name: true } } },
+          orderBy: { student: { name: 'asc' } },
+        },
+      },
+    });
+
+    if (!session) {
+      // No session yet for this section+date: there's nothing to report "not found" about —
+      // the teacher's Mark Attendance screen still needs the full enrolled roster to render a
+      // first-time draft (every student defaulted to Present client-side).
+      const roster = await this.prisma.user.findMany({
+        where: { sectionId, role: 'student' },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      });
+      return {
+        submitted: false,
+        locked: dateStr !== this.todayStr(),
+        entries: roster.map((student) => ({ student, status: null })),
+      };
+    }
+
+    return {
+      submitted: true,
+      locked: dateStr !== this.todayStr(),
+      submittedBy: session.submittedBy,
+      submittedAt: session.submittedAt,
+      entries: session.entries.map((e) => ({ student: e.student, status: e.status })),
+      // Teacher same-day edits are never audited (confirmed in docs/plan.md); the audit log
+      // itself (AttendanceEdit, populated by admin PATCH edits) lands in T-034.
+      edits: [],
     };
   }
 

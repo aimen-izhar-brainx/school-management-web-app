@@ -1,11 +1,11 @@
 ---
-diff_hash: 58891511a06a129e6ad060f5c781dd6048a0558c91cf3a23e32642de01698ce2
-reviewed_at: 2026-10-14T07:53:03Z
+diff_hash: 0d10dc7b5824a7af9e5359d3e259fe1c9a253a1f2382ba6177bb92745641ca93
+reviewed_at: 2026-10-14T08:59:22Z
 ---
 
 ## Summary
 
-Adds the attendance backend (NestJS + Prisma): `AttendanceSession`/`AttendanceEntry` models and migration, and `PUT/GET /attendance/sections/:sectionId/days/:date`, restricted to the section's class teacher (teacher role + ownership check). Submissions are limited to today's date and must cover the section roster exactly. Four real-DB specs are included. The rest of the diff is docs and tickets (T-032..T-039), plus a regenerated tsbuildinfo. Stack: NestJS (backend only; no frontend change, so no cross-repo contract issue).
+T-033: MarkAttendancePage is wired to the real attendance API with same-day re-edit. The backend GET now always returns 200 with the full roster and student names, and PUT returns the original T-032 shape. Stack: NestJS (backend) + React (frontend). Specs and the ticket/status docs are updated.
 
 ## Findings
 
@@ -14,36 +14,41 @@ Adds the attendance backend (NestJS + Prisma): `AttendanceSession`/`AttendanceEn
 ### High (0)
 
 ### Medium (2)
-- **backend/src/attendance/attendance.service.ts:100** — `assertRosterCovered` compares Sets, so duplicate `studentId`s in `entries` pass the roster check. `createMany` then violates the `(sessionId, studentId)` unique index and the request fails as a 500 instead of a 400. The transaction rolls back, but the client gets an unhelpful error. Reject duplicates explicitly (e.g. compare `entries.length` to the Set size and report the duplicate ids). *(correctness)*
-  - status: open
+- **frontend/src/components/MarkAttendancePage.tsx:~160 (handleSave)** — A save in flight is not guarded against a section/date change. The select and date inputs stay enabled while `submitting`, and `handleSave` calls `setDay`/`setDraft`/`setEditing` without checking `latestDayRequest`. If the teacher switches section during the PUT, the old section's result overwrites `day` and is shown under the newly selected section. *(correctness)*
+  - status: fixed
   - dev_reasoning: N/A
-  - ai_reasoning: Input such as `[{studentId:A,status:present},{studentId:A,status:absent}]` for a one-student roster passes validation and ends in an unhandled Prisma P2002 error.
-- **backend/src/attendance/attendance.service.ts:136** — "Today" is computed as the UTC date (`new Date().toISOString().slice(0, 10)`). For a school in a non-UTC timezone, teachers submitting near local midnight (or early morning in a timezone ahead of UTC) get "locked" errors for what is locally today, or can submit for the wrong day. Use a configured school timezone (via config) to derive today's date. *(correctness)*
-  - status: open
+  - ai_reasoning: Fixed. The section `<select>` and date `<input>` now carry `disabled={submitting}`, matching the existing disabled-state pattern used elsewhere in the component (e.g. the submit/save button), so the pickers can't be changed while a PUT is in flight.
+- **backend/src/attendance/attendance.service.ts:100 and :90** — `user.findMany` for the roster and the session `entries` select have no `orderBy`. Student order is database-defined and can change between loads, so rows can shuffle between the unsubmitted form and the submitted view. *(correctness)*
+  - status: fixed
   - dev_reasoning: N/A
-  - ai_reasoning: The date is the core of the edit-lock rule (`locked` and `assertIsToday`), so the offset directly affects who can submit when.
+  - ai_reasoning: Fixed. `orderBy: { name: 'asc' }` was added to the roster `user.findMany`, and `orderBy: { student: { name: 'asc' } }` to the `entries` list query in `loadResponse` (the `AttendanceEntry.student` relation is to-one, so Prisma 7 supports ordering the to-many `entries` list by the related student's name directly).
 
-### Low (2)
-- **backend/src/attendance/attendance.service.ts:25** — The roster check (`assertRosterCovered`) runs outside the transaction that deletes and recreates entries. A student moved into or out of the section between the check and the write can leave an entry that no longer matches the roster. The window is small and the effect is minor, but running the check inside the transaction would close it. *(correctness)*
-  - status: open
-  - dev_reasoning: N/A
-  - ai_reasoning: Low impact; the FK on `studentId` still prevents invalid users, and only section membership can drift.
-- **backend/src/attendance/attendance.controller.ts:25** — Controller reads the user via `@Req() req: Request & { user: JwtPayload }` in both handlers, repeating the type. A small `@CurrentUser()` decorator would remove the duplication. No such decorator exists in the project yet, so this is optional. *(maintainability)*
+### Low (4)
+- **frontend/src/components/MarkAttendancePage.tsx:~95 (loadDirectory)** — Fetches `/classes` and then one `/sections` request per class, so request count grows with the number of classes. The ticket notes say this mirrors TimetablePage, so the impact is small. *(maintainability)*
   - status: skipped
-  - dev_reasoning: cosmetic only; introducing a new @CurrentUser() decorator pattern is out of scope for this ticket and not used elsewhere in the project yet.
-  - ai_reasoning: Consistent with how other controllers may do it, so this is purely a cleanup suggestion.
+  - dev_reasoning: Intentionally matches the existing fan-out pattern already used by TimetablePage.tsx for the same `/classes` + per-class `/sections` lookup — this ticket's own technical notes specify reusing that exact pattern. A dedicated "my sections" endpoint would be a reasonable follow-up but is a new backend surface, out of scope for this ticket.
+  - ai_reasoning: Acceptable for now. A "my sections" endpoint would remove the fan-out and the client-side filter.
+- **frontend/src/components/MarkAttendancePage.tsx (date input)** — The user can clear the date input, which makes `date` an empty string. The page then requests `/days/` and shows a confusing routing error. *(correctness)*
+  - status: fixed
+  - dev_reasoning: N/A
+  - ai_reasoning: Fixed. The day-load effect now checks `isValidDateKey(date)` (a `YYYY-MM-DD` regex) before firing, so an empty or incomplete date value is ignored instead of hitting a malformed `/days/` URL. Covered by a new test.
+- **backend/src/attendance/attendance.service.ts:64** — `findUniqueOrThrow` raises a Prisma P2025 error, which surfaces as a 500 if the session is ever absent. This is unlikely right after the upsert, but it bypasses the Nest exception mapping used elsewhere. *(consistency)*
+  - status: fixed
+  - dev_reasoning: N/A
+  - ai_reasoning: Fixed. `loadSubmitResponse` now uses `findUnique` plus an explicit null check that throws `NotFoundException`, consistent with `findSection`'s not-found handling elsewhere in this service.
+- **backend/tsconfig.build.tsbuildinfo** — A build artifact is tracked in git and modified in this diff, which adds noise and merge conflicts. *(maintainability)*
+  - status: skipped
+  - dev_reasoning: pre-existing tracked build artifact from before this ticket; untracking it is an unrelated repo-hygiene change out of scope here.
+  - ai_reasoning: Add it to .gitignore and untrack it in a separate commit.
 
 ## Reviewed files
-- backend/prisma/migrations/20261014090000_add_attendance/migration.sql
-- backend/prisma/schema.prisma
-- backend/src/app.module.ts
-- backend/src/attendance/attendance.controller.ts
-- backend/src/attendance/attendance.module.ts
+- .code-reviews/brainx-review.md (deleted, replaced by this review)
 - backend/src/attendance/attendance.service.ts
-- backend/src/attendance/dto/submit-attendance.dto.ts
-- backend/src/attendance/attendance-access.spec.ts (skimmed)
-- backend/src/attendance/attendance-date.spec.ts (skimmed)
-- backend/src/attendance/attendance-edit.spec.ts (skimmed)
-- backend/src/attendance/attendance-submit.spec.ts (skimmed)
-- backend/tsconfig.build.tsbuildinfo (skipped, generated)
-- docs/brainstorm.md, docs/plan.md, docs/use-cases.md, tickets/STATUS.md, tickets/T-032.md .. T-039.md (docs only)
+- backend/src/attendance/attendance-date.spec.ts
+- backend/src/attendance/attendance-edit.spec.ts
+- backend/src/attendance/attendance-submit.spec.ts
+- backend/tsconfig.build.tsbuildinfo (generated, skimmed)
+- frontend/src/components/MarkAttendancePage.tsx
+- frontend/src/components/MarkAttendancePage.test.tsx
+- tickets/STATUS.md
+- tickets/T-033.md
