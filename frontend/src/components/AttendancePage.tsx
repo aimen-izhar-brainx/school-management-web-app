@@ -2,21 +2,15 @@ import { BarChart3, History, Lock, Pencil, Save, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import {
   ATTENDANCE_STATUSES,
-  INITIAL_ATTENDANCE_RECORDS,
-  attendanceKey,
   currentMonthKey,
   formatDateLabel,
   formatDateTimeLabel,
   monthLabel,
-  monthlyStatsForSection,
   mostRecentSchoolDay,
-  rosterFor,
   statusInfo,
   summarizeEntries,
-  type AttendanceRecord,
   type AttendanceStatus,
 } from '../data/attendance'
-import { SECTION_OPTIONS, sectionLabel } from '../data/timetable'
 import type { AuthUser } from '../lib/auth'
 import { compareByName } from '../lib/compareByName'
 import { errorMessage } from '../lib/errorMessage'
@@ -69,12 +63,34 @@ interface AdminAttendanceDayResponse {
   edits?: AdminAttendanceEditRow[]
 }
 
+/** One row of `GET /attendance/reports/daily` (T-036) — `summary === null` means nothing was submitted. */
+interface DailySummaryReportRow {
+  section: NamedRow
+  summary: { present: number; absent: number; leave: number } | null
+}
+
+/** One row of `GET /attendance/reports/monthly` (T-036) — `percentage === null` means zero marked days. */
+interface MonthlyPercentageReportRow {
+  student: NamedRow
+  present: number
+  absent: number
+  leave: number
+  markedDays: number
+  percentage: number | null
+}
+
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 /** A full `YYYY-MM-DD` calendar date — guards against the date input being cleared (empty string). */
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 function isValidDateKey(value: string): boolean {
   return DATE_RE.test(value)
+}
+
+/** A full `YYYY-MM` month key — guards against the month input being cleared (empty string). */
+const MONTH_RE = /^\d{4}-\d{2}$/
+function isValidMonthKey(value: string): boolean {
+  return MONTH_RE.test(value)
 }
 
 /** Every roster student, defaulted to "present" wherever no status has been saved yet. */
@@ -98,10 +114,6 @@ function editorNameFor(edit: AdminAttendanceEditRow, user: AuthUser): string {
 
 /** Admin-only screen: browse & correct any class's attendance, plus basic daily/monthly reports. */
 export function AttendancePage({ user, onBack, onSignOut }: AttendancePageProps) {
-  // Daily summary & monthly % tables below "Browse & edit" are T-037's scope and still run on
-  // this mock dataset — left untouched.
-  const [records] = useState<Record<string, AttendanceRecord>>(INITIAL_ATTENDANCE_RECORDS)
-
   const [sections, setSections] = useState<SectionChoice[]>([])
   const [directoryStatus, setDirectoryStatus] = useState<LoadStatus>('loading')
   const [directoryError, setDirectoryError] = useState<string | null>(null)
@@ -119,13 +131,21 @@ export function AttendancePage({ user, onBack, onSignOut }: AttendancePageProps)
   const [saveError, setSaveError] = useState<string | null>(null)
 
   const [summaryDate, setSummaryDate] = useState(mostRecentSchoolDay())
+  const [dailyReport, setDailyReport] = useState<DailySummaryReportRow[]>([])
+  const [dailyReportStatus, setDailyReportStatus] = useState<LoadStatus>('idle')
+  const [dailyReportError, setDailyReportError] = useState<string | null>(null)
 
-  const [monthlySectionId, setMonthlySectionId] = useState(SECTION_OPTIONS[0]?.id ?? '')
+  const [monthlySectionId, setMonthlySectionId] = useState('')
   const [monthKey, setMonthKey] = useState(currentMonthKey())
+  const [monthlyReport, setMonthlyReport] = useState<MonthlyPercentageReportRow[]>([])
+  const [monthlyReportStatus, setMonthlyReportStatus] = useState<LoadStatus>('idle')
+  const [monthlyReportError, setMonthlyReportError] = useState<string | null>(null)
 
   const isMounted = useRef(true)
   const latestDirectoryRequest = useRef(0)
   const latestDayRequest = useRef(0)
+  const latestDailyReportRequest = useRef(0)
+  const latestMonthlyReportRequest = useRef(0)
 
   useEffect(() => {
     isMounted.current = true
@@ -152,7 +172,10 @@ export function AttendancePage({ user, onBack, onSignOut }: AttendancePageProps)
         )
         setSections(flat)
         setDirectoryStatus('ready')
-        if (flat.length > 0) setBrowseSectionId(flat[0].id)
+        if (flat.length > 0) {
+          setBrowseSectionId(flat[0].id)
+          setMonthlySectionId(flat[0].id)
+        }
       } catch (error) {
         if (!isMounted.current || request !== latestDirectoryRequest.current) return
         setDirectoryError(errorMessage(error))
@@ -202,6 +225,77 @@ export function AttendancePage({ user, onBack, onSignOut }: AttendancePageProps)
     void loadDay()
   }, [browseSectionId, browseDate])
 
+  // Daily/monthly reports (T-037) are fetched on mount and whenever their inputs change, mirroring
+  // `loadDay`'s effect above for "Browse & edit" — including its request-id-ref-guard idiom, which
+  // discards a stale in-flight response if the inputs change again before it resolves.
+  useEffect(() => {
+    function resetStaleDailyReport() {
+      setDailyReport([])
+      setDailyReportStatus('idle')
+    }
+
+    // Clearing the date input makes `summaryDate` an empty string — don't fire a request to a
+    // malformed `/reports/daily` URL for it. Bump the request ref first so any still-in-flight
+    // request for the previous (valid) date is marked stale and its response gets discarded.
+    if (!isValidDateKey(summaryDate)) {
+      ++latestDailyReportRequest.current
+      resetStaleDailyReport()
+      return
+    }
+    const request = ++latestDailyReportRequest.current
+
+    async function loadDailyReport() {
+      setDailyReportStatus('loading')
+      setDailyReportError(null)
+      try {
+        const query = new URLSearchParams({ date: summaryDate }).toString()
+        const data = await api.get<DailySummaryReportRow[]>(`/attendance/reports/daily?${query}`)
+        if (!isMounted.current || request !== latestDailyReportRequest.current) return
+        setDailyReport(data)
+        setDailyReportStatus('ready')
+      } catch (error) {
+        if (!isMounted.current || request !== latestDailyReportRequest.current) return
+        setDailyReportError(errorMessage(error))
+        setDailyReportStatus('error')
+      }
+    }
+    void loadDailyReport()
+  }, [summaryDate])
+
+  useEffect(() => {
+    function resetStaleMonthlyReport() {
+      setMonthlyReport([])
+      setMonthlyReportStatus('idle')
+    }
+
+    // Bump the request ref first so any still-in-flight request for the previous (valid)
+    // section/month is marked stale and its response gets discarded instead of repopulating the
+    // table after the inputs have since become invalid.
+    if (!monthlySectionId || !isValidMonthKey(monthKey)) {
+      ++latestMonthlyReportRequest.current
+      resetStaleMonthlyReport()
+      return
+    }
+    const request = ++latestMonthlyReportRequest.current
+
+    async function loadMonthlyReport() {
+      setMonthlyReportStatus('loading')
+      setMonthlyReportError(null)
+      try {
+        const query = new URLSearchParams({ sectionId: monthlySectionId, month: monthKey }).toString()
+        const data = await api.get<MonthlyPercentageReportRow[]>(`/attendance/reports/monthly?${query}`)
+        if (!isMounted.current || request !== latestMonthlyReportRequest.current) return
+        setMonthlyReport(data)
+        setMonthlyReportStatus('ready')
+      } catch (error) {
+        if (!isMounted.current || request !== latestMonthlyReportRequest.current) return
+        setMonthlyReportError(errorMessage(error))
+        setMonthlyReportStatus('error')
+      }
+    }
+    void loadMonthlyReport()
+  }, [monthlySectionId, monthKey])
+
   const roster = day?.entries ?? []
   const browseCounts = day?.submitted
     ? summarizeEntries(Object.fromEntries(roster.map((entry) => [entry.student.id, entry.status as AttendanceStatus])))
@@ -248,14 +342,10 @@ export function AttendancePage({ user, onBack, onSignOut }: AttendancePageProps)
     }
   }
 
-  const dailySummaryRows = SECTION_OPTIONS.map((section) => {
-    const record = records[attendanceKey(section.id, summaryDate)] ?? null
-    const roster = rosterFor(section.id)
-    const counts = record ? summarizeEntries(record.entries) : null
-    return { section, roster, counts }
-  })
-
-  const monthlyStats = monthlyStatsForSection(records, monthlySectionId, monthKey)
+  // Reuses the section directory already fetched for "Browse & edit" (T-035) so the daily summary
+  // table's "Class section" column shows the same "<Class> - <Section>" label, without a third
+  // /classes + /sections fetch — the report endpoint itself only returns the bare section id/name.
+  const sectionLabelById = new Map(sections.map((section) => [section.id, section.label]))
 
   const selectedSectionLabel = sections.find((section) => section.id === browseSectionId)?.label ?? ''
 
@@ -495,21 +585,52 @@ export function AttendancePage({ user, onBack, onSignOut }: AttendancePageProps)
               </tr>
             </thead>
             <tbody>
-              {dailySummaryRows.map(({ section, roster, counts }) => (
-                <tr key={section.id} className="border-b border-slate-100 last:border-b-0">
-                  <td className="px-4 py-2.5 font-medium text-slate-900">{sectionLabel(section)}</td>
-                  <td className="px-4 py-2.5 text-slate-600">{counts?.present ?? '—'}</td>
-                  <td className="px-4 py-2.5 text-slate-600">{counts?.absent ?? '—'}</td>
-                  <td className="px-4 py-2.5 text-slate-600">{counts?.leave ?? '—'}</td>
-                  <td className="px-4 py-2.5">
-                    {counts ? (
-                      <span className="text-xs text-slate-400">{roster.length} enrolled</span>
-                    ) : (
-                      <span className="text-xs font-medium text-amber-600">Not marked yet</span>
-                    )}
+              {dailyReportStatus === 'loading' && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-500">
+                    Loading...
                   </td>
                 </tr>
-              ))}
+              )}
+              {dailyReportStatus === 'error' && (
+                <tr>
+                  <td colSpan={5} role="alert" className="px-4 py-6 text-center text-xs text-red-600">
+                    {dailyReportError}
+                  </td>
+                </tr>
+              )}
+              {dailyReportStatus === 'idle' && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-500">
+                    Select a date.
+                  </td>
+                </tr>
+              )}
+              {dailyReportStatus === 'ready' && dailyReport.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-6 text-center text-xs text-slate-400">
+                    No sections found.
+                  </td>
+                </tr>
+              )}
+              {dailyReportStatus === 'ready' &&
+                dailyReport.map((row) => (
+                  <tr key={row.section.id} className="border-b border-slate-100 last:border-b-0">
+                    <td className="px-4 py-2.5 font-medium text-slate-900">
+                      {sectionLabelById.get(row.section.id) ?? row.section.name}
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-600">{row.summary?.present ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-slate-600">{row.summary?.absent ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-slate-600">{row.summary?.leave ?? '—'}</td>
+                    <td className="px-4 py-2.5">
+                      {row.summary ? (
+                        <span className="text-xs text-slate-400">Submitted</span>
+                      ) : (
+                        <span className="text-xs font-medium text-amber-600">Not marked yet</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         </div>
@@ -535,9 +656,9 @@ export function AttendancePage({ user, onBack, onSignOut }: AttendancePageProps)
               onChange={(event) => setMonthlySectionId(event.target.value)}
               className="mt-1.5 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
             >
-              {SECTION_OPTIONS.map((section) => (
+              {sections.map((section) => (
                 <option key={section.id} value={section.id}>
-                  {sectionLabel(section)}
+                  {section.label}
                 </option>
               ))}
             </select>
@@ -556,6 +677,12 @@ export function AttendancePage({ user, onBack, onSignOut }: AttendancePageProps)
           </div>
         </div>
 
+        {directoryStatus === 'error' && (
+          <p role="alert" className="mt-3 text-sm text-red-600">
+            {directoryError}
+          </p>
+        )}
+
         <p className="mt-3 text-xs text-slate-400">{monthLabel(monthKey)}</p>
 
         <div className="mt-2 overflow-x-auto rounded-xl border border-slate-200 bg-white">
@@ -571,22 +698,44 @@ export function AttendancePage({ user, onBack, onSignOut }: AttendancePageProps)
               </tr>
             </thead>
             <tbody>
-              {monthlyStats.map((stat) => (
-                <tr key={stat.student.id} className="border-b border-slate-100 last:border-b-0">
-                  <td className="px-4 py-2.5 font-medium text-slate-900">{stat.student.name}</td>
-                  <td className="px-4 py-2.5 text-slate-600">{stat.present}</td>
-                  <td className="px-4 py-2.5 text-slate-600">{stat.absent}</td>
-                  <td className="px-4 py-2.5 text-slate-600">{stat.leave}</td>
-                  <td className="px-4 py-2.5 text-slate-600">{stat.markedDays}</td>
-                  <td className="px-4 py-2.5 font-semibold text-slate-900">
-                    {formatAttendancePercentage(stat.percentage)}
+              {monthlyReportStatus === 'loading' && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-sm text-slate-500">
+                    Loading...
                   </td>
                 </tr>
-              ))}
-              {monthlyStats.length === 0 && (
+              )}
+              {monthlyReportStatus === 'error' && (
+                <tr>
+                  <td colSpan={6} role="alert" className="px-4 py-6 text-center text-xs text-red-600">
+                    {monthlyReportError}
+                  </td>
+                </tr>
+              )}
+              {monthlyReportStatus === 'idle' && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-sm text-slate-500">
+                    Select a section.
+                  </td>
+                </tr>
+              )}
+              {monthlyReportStatus === 'ready' &&
+                monthlyReport.map((stat) => (
+                  <tr key={stat.student.id} className="border-b border-slate-100 last:border-b-0">
+                    <td className="px-4 py-2.5 font-medium text-slate-900">{stat.student.name}</td>
+                    <td className="px-4 py-2.5 text-slate-600">{stat.present}</td>
+                    <td className="px-4 py-2.5 text-slate-600">{stat.absent}</td>
+                    <td className="px-4 py-2.5 text-slate-600">{stat.leave}</td>
+                    <td className="px-4 py-2.5 text-slate-600">{stat.markedDays}</td>
+                    <td className="px-4 py-2.5 font-semibold text-slate-900">
+                      {formatAttendancePercentage(stat.percentage)}
+                    </td>
+                  </tr>
+                ))}
+              {monthlyReportStatus === 'ready' && monthlyReport.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-4 py-6 text-center text-xs text-slate-400">
-                    No students enrolled in this section.
+                    No students enrolled.
                   </td>
                 </tr>
               )}

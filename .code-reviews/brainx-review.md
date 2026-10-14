@@ -1,11 +1,11 @@
 ---
-diff_hash: 2d6900f6878bd90e02f22eac33bf435e4758b43c13b3947814164b64a7813cec
-reviewed_at: 2026-10-14T11:23:38Z
+diff_hash: 37162f7321930f3b3335ec7acdd2076df9c5882d410bd275757bf87f9ee7d0b5
+reviewed_at: 2026-10-14T12:22:44Z
 ---
 
 ## Summary
 
-Adds two admin-only attendance report endpoints under `/api/attendance/reports` (daily per-section summary, monthly per-student percentage) in the NestJS backend, with real-DB integration specs and ticket/status bookkeeping for T-036. Auth/role guards are applied at controller level, inputs are validated in the service, and the logic matches the ticket's acceptance criteria. Stack: NestJS (backend only; no cross-repo contract change in this diff).
+Frontend-only change (T-037, React 19 + Vite + Tailwind): the admin `AttendancePage` "Daily summary" and "Monthly attendance percentage" tables now load from T-036's `/attendance/reports/daily` and `/attendance/reports/monthly` endpoints instead of the mock dataset, using the same request-id-ref stale-guard idiom as the existing "Browse & edit" loader. Tests are expanded accordingly; ticket/status bookkeeping updated; the previous `.code-reviews/brainx-review.md` (T-036) is deleted. No backend files are in this diff, so there is no cross-repo contract change (the frontend consumes the already-committed T-036 response shapes).
 
 ## Findings
 
@@ -13,30 +13,21 @@ Adds two admin-only attendance report endpoints under `/api/attendance/reports` 
 
 ### High (0)
 
-### Medium (2)
-- **backend/src/attendance/attendance-report-daily.spec.ts:162** — The UC-08-E2 test runs `prisma.section.deleteMany({})`, deleting every Section (and cascading to dependent rows) in whatever database the tests point at, not just this run's PREFIX-scoped rows. If `DATABASE_URL` is a dev/shared DB, running the suite destroys real data. *(correctness / test-safety)*
-  - status: fixed
-  - dev_reasoning: Added a defensive guard immediately before the `deleteMany` that parses the database name out of `DATABASE_URL` and throws loudly unless it matches `/test/i` (matching the `_test` suffix convention used in `backend/.env`, e.g. `school_management_test`). Kept the existing test structure/PREFIX-scoping as-is — this is defense-in-depth on top of it, not a redesign.
-  - ai_reasoning: N/A
-
-- **backend/src/attendance/attendance.service.ts:214** — Aggregation is done in JS by loading every `AttendanceEntry` row (daily: all entries for every section on the date; monthly: all entries for the section-month) and counting with loops, instead of `groupBy`/`_count` in the database. *(performance)*
-  - status: fixed
-  - dev_reasoning: Rewrote both `dailyReport` and `monthlyReport` to use `prisma.attendanceEntry.groupBy({ by: [...], where, _count: true })` instead of `findMany` + JS loops. `dailyReport` groups by `sessionId`+`status` (sectionId isn't a field on `AttendanceEntry`, only on its parent `AttendanceSession`, so sessions are fetched separately with their `sectionId` and used to map grouped counts back to sections); `monthlyReport` groups by `studentId`+`status` filtered through the `session` relation. Response shape/values are unchanged (verified via the existing specs, including AC-09.1's non-integer-rounding case and AC-09.3's partial-month-enrollment case).
-  - ai_reasoning: N/A
+### Medium (1)
+- **frontend/src/components/AttendancePage.tsx:233** — In both report effects, the invalid-input early-return branch (cleared date at ~L238, cleared month / empty section at ~L267) resets state but does not bump `latestDailyReportRequest` / `latestMonthlyReportRequest`. A request already in flight for the previous valid value still passes the `request !== latest...current` check when it resolves and repopulates the table. *(correctness / race condition)*
+  - status: open
+  - dev_reasoning: N/A
+  - ai_reasoning: Concrete scenario: admin picks a date (request #1 in flight), then clears the date input; the effect resets to `idle`/empty without incrementing the counter; request #1 resolves, `request === latest` still holds, and the table shows the old date's rows (status `ready`) while the date field is blank. Fix: increment the request ref (`latestDailyReportRequest.current++` / `latestMonthlyReportRequest.current++`) before the early return, or move the increment above the validity check.
 
 ### Low (1)
-- **backend/src/attendance/attendance.controller.ts:72** — `@Query('date')` / `@Query('sectionId')` / `@Query('month')` are raw untyped strings validated ad hoc in the service rather than via DTOs with `class-validator`; `dailyReport(date)` with a missing param relies on the regex failing on `undefined`. *(consistency / validation)*
-  - status: skipped
-  - dev_reasoning: Matches the existing ad hoc query/path-param validation pattern already used elsewhere in this controller (e.g. the admin `:date`/`:sectionId` path params); introducing DTOs here only would be inconsistent — a broader DTO migration across the whole attendance module is out of scope for this ticket.
-  - ai_reasoning: N/A
+- **frontend/src/components/AttendancePage.tsx:582** — Report tables have no empty/idle feedback in several states: the daily table renders an empty `<tbody>` when the report is `ready` with zero sections or `idle` (cleared date), and the monthly table renders nothing while the section directory is still loading or if it failed (`monthlySectionId` stays `''` so the effect never fetches). *(maintainability / UX states)*
+  - status: open
+  - dev_reasoning: N/A
+  - ai_reasoning: The project's own React criteria call for loading/error/empty states in the UI. Add a short placeholder row (e.g. "No sections." / "Select a date." / "Select a section.") for the idle and empty cases, and surface the directory error near the monthly section picker or reuse `directoryError`.
 
 ## Reviewed files
-- .code-reviews/brainx-review.md (deleted — previous review artifact)
-- backend/src/attendance/attendance-report-daily.spec.ts
-- backend/src/attendance/attendance-report-monthly.spec.ts
-- backend/src/attendance/attendance.controller.ts
-- backend/src/attendance/attendance.module.ts
-- backend/src/attendance/attendance.service.ts
-- backend/tsconfig.build.tsbuildinfo (skipped — generated build artifact)
+- .code-reviews/brainx-review.md (deleted in index — previous review artifact; rewritten by this review)
+- frontend/src/components/AttendancePage.tsx
+- frontend/src/components/AttendancePage.test.tsx
 - tickets/STATUS.md
-- tickets/T-036.md
+- tickets/T-037.md

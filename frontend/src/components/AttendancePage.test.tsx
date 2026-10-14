@@ -1,11 +1,10 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import '@testing-library/jest-dom'
 import { AttendancePage } from './AttendancePage'
 import type { AuthUser } from '../lib/auth'
 import { api } from '../lib/http'
-import { formatDateTimeLabel, rosterFor } from '../data/attendance'
-import { SECTION_OPTIONS } from '../data/timetable'
+import { currentMonthKey, formatDateTimeLabel, mostRecentSchoolDay } from '../data/attendance'
 
 // T-035: AttendancePage's "Browse & edit" section is wired to the real admin attendance API from
 // T-034 (`GET`/`PATCH /attendance/admin/sections/:sectionId/days/:date`) plus `GET /classes` and
@@ -83,11 +82,30 @@ const ROSTER_3: Student[] = [
 
 const PAST_DATE = '2026-01-05'
 const FUTURE_DATE = '2099-01-01'
+const MONTH = '2026-02'
+const FUTURE_MONTH = '2099-01'
+
+type DailyReportRow = {
+  section: { id: string; name: string }
+  summary: { present: number; absent: number; leave: number } | null
+}
+type MonthlyReportRow = {
+  student: { id: string; name: string }
+  present: number
+  absent: number
+  leave: number
+  markedDays: number
+  percentage: number | null
+}
 
 interface Fixture {
   sectionsByClass: Record<string, unknown[]>
   // keyed by `${sectionId}__${date}` — the exact GET /attendance/admin/sections/:id/days/:date body.
   attendance: Record<string, Record<string, unknown>>
+  // keyed by the `date` query param — the exact GET /attendance/reports/daily?date= body (T-036/T-037).
+  daily: Record<string, DailyReportRow[]>
+  // keyed by `${sectionId}__${month}` — the exact GET /attendance/reports/monthly?sectionId=&month= body (T-036/T-037).
+  monthly: Record<string, MonthlyReportRow[]>
 }
 
 /** Not-marked-yet shape: every roster student present with `status: null`. */
@@ -113,23 +131,41 @@ function markedDay(
 }
 
 function defaultFixture(): Fixture {
-  return { sectionsByClass: SECTIONS_BY_CLASS, attendance: {} }
+  return { sectionsByClass: SECTIONS_BY_CLASS, attendance: {}, daily: {}, monthly: {} }
 }
 
 function setupGet(fixture: Fixture) {
   mockApi.get.mockImplementation((path: string) => {
-    if (path === '/classes') return Promise.resolve(CLASSES)
+    const [base, queryString] = path.split('?')
+    const params = new URLSearchParams(queryString ?? '')
 
-    const sections = /^\/classes\/([^/]+)\/sections$/.exec(path)
+    if (base === '/classes') return Promise.resolve(CLASSES)
+
+    const sections = /^\/classes\/([^/]+)\/sections$/.exec(base)
     if (sections) return Promise.resolve(fixture.sectionsByClass[sections[1]] ?? [])
 
-    const day = /^\/attendance\/admin\/sections\/([^/]+)\/days\/([^/]+)$/.exec(path)
+    const day = /^\/attendance\/admin\/sections\/([^/]+)\/days\/([^/]+)$/.exec(base)
     if (day) {
       const record = fixture.attendance[`${day[1]}__${day[2]}`]
       if (record) return Promise.resolve(record)
       // No fixture configured for this section+date — mirror the real admin GET endpoint, which
       // always resolves 200 (never 404) with a non-empty roster defaulted to "not marked yet".
       return Promise.resolve(notMarked(ROSTER_3, true))
+    }
+
+    // T-037: daily summary report (UC-08). Defaults to `[]` when the test hasn't configured this
+    // exact date, so unrelated tests mounting the whole page (which now also triggers this fetch
+    // on mount) don't blow up with an unhandled rejection.
+    if (base === '/attendance/reports/daily') {
+      const date = params.get('date') ?? ''
+      return Promise.resolve(fixture.daily[date] ?? [])
+    }
+
+    // T-037: monthly percentage report (UC-09). Same empty-default rationale as above.
+    if (base === '/attendance/reports/monthly') {
+      const sectionId = params.get('sectionId') ?? ''
+      const month = params.get('month') ?? ''
+      return Promise.resolve(fixture.monthly[`${sectionId}__${month}`] ?? [])
     }
 
     return Promise.reject(new Error(`unexpected GET ${path}`))
@@ -161,6 +197,36 @@ function selectBrowse(sectionId: string, date: string) {
 
 function studentRow(name: string): HTMLElement {
   return screen.getByText(name).closest('li') as HTMLElement
+}
+
+// ---------------------------------------------------------------------------
+// T-037 report-table helpers
+// ---------------------------------------------------------------------------
+function summaryDateInput(): HTMLInputElement {
+  return document.getElementById('summary-date') as HTMLInputElement
+}
+
+function monthlySectionSelect(): HTMLSelectElement {
+  return document.getElementById('monthly-section') as HTMLSelectElement
+}
+
+function monthlyMonthInput(): HTMLInputElement {
+  return document.getElementById('monthly-month') as HTMLInputElement
+}
+
+function dailySummarySection(): HTMLElement {
+  return screen.getByText(/daily summary per class/i).closest('section') as HTMLElement
+}
+
+function monthlySection(): HTMLElement {
+  return screen.getByText(/monthly attendance percentage per student/i).closest('section') as HTMLElement
+}
+
+/** Every `<tr>` in a report table, excluding the header row. */
+function bodyRows(container: HTMLElement): HTMLElement[] {
+  return within(container)
+    .getAllByRole('row')
+    .slice(1) as HTMLElement[]
 }
 
 function lastPatchEntries(): Record<string, string> {
@@ -215,27 +281,13 @@ describe('AttendancePage shell', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Report tables below "Browse & edit" are T-037 (still mock-data) and out of scope for T-035 —
-// left completely untouched, including this pre-existing regression test.
+// NOTE (T-037): the pre-existing "T-007 badge/roster/edit-mode regression" describe block that
+// used to live here exercised the monthly table's OLD mock-data path directly (`rosterFor()` /
+// `SECTION_OPTIONS[0]` / `monthlyStatsForSection`), which T-037 replaces with real API data below.
+// Its behavioral guarantee — zero marked days in the selected month never renders "0%" or "NaN" —
+// is superseded by 'AC-09.2'/'UC-09-E1' in the "AttendancePage monthly percentage (UC-09)" describe
+// further down, now driven by `GET /attendance/reports/monthly` instead of the mock dataset.
 // ---------------------------------------------------------------------------
-describe('AttendancePage (T-007 badge/roster/edit-mode regression)', () => {
-  const defaultSectionId = SECTION_OPTIONS[0]?.id ?? ''
-
-  it('UC-03-E1 shows "—" (never NaN) for every student when zero days are marked in the month', async () => {
-    renderPage()
-    await waitForBrowseReady()
-
-    const monthInput = document.getElementById('monthly-month') as HTMLInputElement
-    fireEvent.change(monthInput, { target: { value: '2099-01' } })
-
-    const roster = rosterFor(defaultSectionId)
-    expect(roster.length).toBeGreaterThan(0)
-
-    const dashes = screen.getAllByText('—')
-    expect(dashes).toHaveLength(roster.length)
-    expect(screen.queryByText(/nan/i)).not.toBeInTheDocument()
-  })
-})
 
 // ---------------------------------------------------------------------------
 // Admin section picker: every section, unfiltered (T-035 technical notes)
@@ -591,5 +643,342 @@ describe('AttendancePage admin edit + audit log (UC-05)', () => {
     expect(tomasEdit?.textContent).toContain('Leave')
     expect(tomasEdit?.textContent).toContain(admin.name)
     expect(tomasEdit?.textContent).toContain(formatDateTimeLabel(editedAt2))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// T-037: wires the "Daily summary" and "Monthly attendance percentage" report tables to
+// `GET /attendance/reports/daily?date=` and `GET /attendance/reports/monthly?sectionId=&month=`.
+//
+// UI CONTRACT:
+//  - Daily summary: on mount (for the default `summaryDate`), and whenever `#summary-date`
+//    changes, fetches `GET /attendance/reports/daily?date=<value>` via a `useEffect` keyed on
+//    `[summaryDate]` (mirroring "Browse & edit"'s `loadDay` effect, including its
+//    request-id-ref-guard idiom), whose response is an array of
+//    `{ section: { id, name }, summary: { present, absent, leave } | null }` — one row per
+//    section in the whole school (not scoped to any one picker). A row whose `summary` is `null`
+//    renders "Not marked yet" instead of numeric counts (AC-08.2, UC-08-E1). While loading, the
+//    table body shows a "Loading..." row.
+//  - Monthly percentage: `#monthly-section` is populated from the same real section directory
+//    already fetched for "Browse & edit" (same ids as `#browse-section`), replacing today's
+//    hardcoded `SECTION_OPTIONS` mock list — there is no other source of a real backend section id
+//    for this picker. On mount (once the directory sets a default `monthlySectionId`), and
+//    whenever `#monthly-section` or `#monthly-month` changes, fetches
+//    `GET /attendance/reports/monthly?sectionId=<id>&month=<value>` via a `useEffect` keyed on
+//    `[monthlySectionId, monthKey]` (same ref-guard idiom), whose response is an array of
+//    `{ student: { id, name }, present, absent, leave, markedDays, percentage: number | null }` —
+//    one row per currently enrolled student. `percentage === null` renders "—" (AC-09.2, UC-09-E1);
+//    an empty array renders "No students enrolled." (UC-09-E2). While loading, the table body
+//    shows a "Loading..." row.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Code-review fix: both report tables must load on initial mount for the already-valid default
+// values, not only after the admin touches a control.
+// ---------------------------------------------------------------------------
+describe('AttendancePage report tables load on mount (code-review fix)', () => {
+  it('own addition: fetches the daily report for the default summary date without any user interaction', async () => {
+    const fixture = defaultFixture()
+    const today = mostRecentSchoolDay()
+    fixture.daily[today] = [{ section: { id: 's5a', name: 'A' }, summary: { present: 1, absent: 0, leave: 0 } }]
+    setupGet(fixture)
+
+    renderPage()
+
+    await waitFor(() => {
+      const call = mockApi.get.mock.calls.findLast((call) => (call[0] as string).startsWith('/attendance/reports/daily'))
+      expect(call).toBeDefined()
+      const params = new URLSearchParams((call![0] as string).split('?')[1] ?? '')
+      expect(params.get('date')).toBe(today)
+    })
+
+    const section = dailySummarySection()
+    await waitFor(() => expect(bodyRows(section)).toHaveLength(1))
+  })
+
+  it('own addition: fetches the monthly report for the directory-driven default section/month without any user interaction', async () => {
+    const fixture = defaultFixture()
+    const month = currentMonthKey()
+    fixture.monthly[`s5a__${month}`] = [
+      { student: { id: 'st-601', name: 'Isla Novak' }, present: 2, absent: 0, leave: 0, markedDays: 2, percentage: 100 },
+    ]
+    setupGet(fixture)
+
+    renderPage()
+
+    await waitFor(() => {
+      const call = mockApi.get.mock.calls.findLast((call) =>
+        (call[0] as string).startsWith('/attendance/reports/monthly'),
+      )
+      expect(call).toBeDefined()
+      const params = new URLSearchParams((call![0] as string).split('?')[1] ?? '')
+      expect(params.get('sectionId')).toBe('s5a')
+      expect(params.get('month')).toBe(month)
+    })
+
+    expect(await screen.findByText('Isla Novak')).toBeInTheDocument()
+  })
+})
+
+describe('AttendancePage daily summary (UC-08)', () => {
+  it('AC-08.2 a section with no recorded session for the date shows "Not marked yet" instead of zeros', async () => {
+    const fixture = defaultFixture()
+    fixture.daily[PAST_DATE] = [
+      { section: { id: 's5a', name: 'A' }, summary: { present: 2, absent: 1, leave: 0 } },
+      { section: { id: 's5b', name: 'B' }, summary: null },
+    ]
+    setupGet(fixture)
+
+    renderPage()
+    await waitForBrowseReady()
+    fireEvent.change(summaryDateInput(), { target: { value: PAST_DATE } })
+
+    const section = dailySummarySection()
+    await waitFor(() => expect(bodyRows(section)).toHaveLength(2))
+
+    const rows = bodyRows(section)
+    const notMarkedRows = rows.filter((row) => /not marked yet/i.test(row.textContent ?? ''))
+    expect(notMarkedRows).toHaveLength(1)
+
+    // The marked section's row shows its real counts (2 present, 1 absent, 0 leave), not a
+    // placeholder — distinguishing "no absences" (a real zero) from "nothing submitted" (null).
+    const markedRow = rows.find((row) => !/not marked yet/i.test(row.textContent ?? ''))
+    expect(markedRow).toBeDefined()
+    expect(within(markedRow as HTMLElement).getByText('2')).toBeInTheDocument()
+    expect(within(markedRow as HTMLElement).getByText('1')).toBeInTheDocument()
+    expect(within(markedRow as HTMLElement).getByText('0')).toBeInTheDocument()
+  })
+
+  it('UC-08-E1 a future date shows "Not marked yet" for every section, not zeros', async () => {
+    const fixture = defaultFixture()
+    fixture.daily[FUTURE_DATE] = [
+      { section: { id: 's5a', name: 'A' }, summary: null },
+      { section: { id: 's5b', name: 'B' }, summary: null },
+      { section: { id: 's6a', name: 'A' }, summary: null },
+    ]
+    setupGet(fixture)
+
+    renderPage()
+    await waitForBrowseReady()
+    fireEvent.change(summaryDateInput(), { target: { value: FUTURE_DATE } })
+
+    // Confirms the page actually re-fetched the real report for this exact future date, rather
+    // than coincidentally showing "Not marked yet" because the mock dataset has no seeded entries
+    // that far out (which it wouldn't catch a component that never wired the real endpoint at all).
+    await waitFor(() => {
+      const call = mockApi.get.mock.calls.findLast((call) => (call[0] as string).startsWith('/attendance/reports/daily'))
+      expect(call).toBeDefined()
+      const params = new URLSearchParams((call![0] as string).split('?')[1] ?? '')
+      expect(params.get('date')).toBe(FUTURE_DATE)
+    })
+
+    const section = dailySummarySection()
+    await waitFor(() => expect(bodyRows(section)).toHaveLength(3))
+
+    const rows = bodyRows(section)
+    for (const row of rows) {
+      expect(/not marked yet/i.test(row.textContent ?? '')).toBe(true)
+    }
+    expect(within(section).queryByText(/^0$/)).not.toBeInTheDocument()
+  })
+
+  it('own addition: fetches the daily report for the selected date (not the mock dataset)', async () => {
+    const fixture = defaultFixture()
+    fixture.daily[PAST_DATE] = [{ section: { id: 's5a', name: 'A' }, summary: { present: 1, absent: 0, leave: 0 } }]
+    setupGet(fixture)
+
+    renderPage()
+    await waitForBrowseReady()
+    fireEvent.change(summaryDateInput(), { target: { value: PAST_DATE } })
+
+    await waitFor(() => {
+      const call = mockApi.get.mock.calls.findLast((call) => (call[0] as string).startsWith('/attendance/reports/daily'))
+      expect(call).toBeDefined()
+      const params = new URLSearchParams((call![0] as string).split('?')[1] ?? '')
+      expect(params.get('date')).toBe(PAST_DATE)
+    })
+  })
+})
+
+describe('AttendancePage monthly percentage (UC-09)', () => {
+  it('AC-09.2 a student with zero marked days in the selected month shows "—", not 0% or an error', async () => {
+    const fixture = defaultFixture()
+    fixture.monthly[`s6a__${MONTH}`] = [
+      { student: { id: 'st-601', name: 'Isla Novak' }, present: 3, absent: 0, leave: 0, markedDays: 3, percentage: 100 },
+      { student: { id: 'st-602', name: 'Mateo Alvarez' }, present: 0, absent: 0, leave: 0, markedDays: 0, percentage: null },
+    ]
+    setupGet(fixture)
+
+    renderPage()
+    await waitForBrowseReady()
+    fireEvent.change(monthlySectionSelect(), { target: { value: 's6a' } })
+    fireEvent.change(monthlyMonthInput(), { target: { value: MONTH } })
+
+    await screen.findByText('Isla Novak')
+    const mateoRow = screen.getByText('Mateo Alvarez').closest('tr') as HTMLElement
+    expect(within(mateoRow).getByText('—')).toBeInTheDocument()
+    expect(within(mateoRow).queryByText('0%')).not.toBeInTheDocument()
+    expect(within(mateoRow).queryByText(/nan/i)).not.toBeInTheDocument()
+    // present/absent/leave/markedDays are all real zeros, still shown as "0" (not hidden/dashed).
+    expect(within(mateoRow).getAllByText('0')).toHaveLength(4)
+
+    const islaRow = screen.getByText('Isla Novak').closest('tr') as HTMLElement
+    expect(within(islaRow).getByText('100%')).toBeInTheDocument()
+  })
+
+  it('UC-09-E1 a future month shows 0 marked days and "—" percentage for every student', async () => {
+    const fixture = defaultFixture()
+    fixture.monthly[`s6a__${FUTURE_MONTH}`] = [
+      { student: { id: 'st-601', name: 'Isla Novak' }, present: 0, absent: 0, leave: 0, markedDays: 0, percentage: null },
+      { student: { id: 'st-602', name: 'Mateo Alvarez' }, present: 0, absent: 0, leave: 0, markedDays: 0, percentage: null },
+    ]
+    setupGet(fixture)
+
+    renderPage()
+    await waitForBrowseReady()
+    fireEvent.change(monthlySectionSelect(), { target: { value: 's6a' } })
+    fireEvent.change(monthlyMonthInput(), { target: { value: FUTURE_MONTH } })
+
+    await screen.findByText('Isla Novak')
+    const table = monthlySection()
+    const rows = bodyRows(table)
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      expect(within(row).getByText('—')).toBeInTheDocument()
+      expect(within(row).queryByText(/nan/i)).not.toBeInTheDocument()
+      expect(within(row).queryByText('0%')).not.toBeInTheDocument()
+    }
+  })
+
+  it('UC-09-E2 a section with zero enrolled students shows "No students enrolled."', async () => {
+    const fixture = defaultFixture()
+    fixture.monthly[`s6a__${MONTH}`] = []
+    setupGet(fixture)
+
+    renderPage()
+    await waitForBrowseReady()
+    fireEvent.change(monthlySectionSelect(), { target: { value: 's6a' } })
+    fireEvent.change(monthlyMonthInput(), { target: { value: MONTH } })
+
+    // Confirms the real endpoint was actually queried for this section+month — otherwise a
+    // component that never wired the endpoint at all could still coincidentally land on an empty
+    // state (e.g. an invalid/unselected section falling back to an empty mock roster) without this
+    // check catching that it isn't really using the real report.
+    await waitFor(() => {
+      const call = mockApi.get.mock.calls.findLast((call) =>
+        (call[0] as string).startsWith('/attendance/reports/monthly'),
+      )
+      expect(call).toBeDefined()
+      const params = new URLSearchParams((call![0] as string).split('?')[1] ?? '')
+      expect(params.get('sectionId')).toBe('s6a')
+      expect(params.get('month')).toBe(MONTH)
+    })
+
+    const table = monthlySection()
+    expect(await within(table).findByText(/no students enrolled/i)).toBeInTheDocument()
+    expect(bodyRows(table).filter((row) => !/no students enrolled/i.test(row.textContent ?? ''))).toHaveLength(0)
+  })
+
+  it('own addition: fetches the monthly report for the selected section and month (not the mock dataset)', async () => {
+    const fixture = defaultFixture()
+    fixture.monthly[`s6a__${MONTH}`] = [
+      { student: { id: 'st-601', name: 'Isla Novak' }, present: 2, absent: 0, leave: 0, markedDays: 2, percentage: 100 },
+    ]
+    setupGet(fixture)
+
+    renderPage()
+    await waitForBrowseReady()
+    fireEvent.change(monthlySectionSelect(), { target: { value: 's6a' } })
+    fireEvent.change(monthlyMonthInput(), { target: { value: MONTH } })
+
+    await waitFor(() => {
+      const call = mockApi.get.mock.calls.findLast((call) =>
+        (call[0] as string).startsWith('/attendance/reports/monthly'),
+      )
+      expect(call).toBeDefined()
+      const params = new URLSearchParams((call![0] as string).split('?')[1] ?? '')
+      expect(params.get('sectionId')).toBe('s6a')
+      expect(params.get('month')).toBe(MONTH)
+    })
+    await screen.findByText('Isla Novak')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Code-review fix: clearing a report filter mid-flight must bump the request-id ref so a
+// still-in-flight (now-stale) response gets discarded instead of repopulating the table after the
+// input has already been cleared.
+// ---------------------------------------------------------------------------
+describe('AttendancePage report tables stale-request race guard (code-review fix)', () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((res) => {
+      resolve = res
+    })
+    return { promise, resolve }
+  }
+
+  it('own addition: clearing the summary date mid-flight discards the stale daily report response', async () => {
+    const fixture = defaultFixture()
+    setupGet(fixture)
+    renderPage()
+    await waitForBrowseReady()
+
+    const pending = deferred<DailyReportRow[]>()
+    const baseGet = mockApi.get.getMockImplementation() as (path: string) => Promise<unknown>
+    mockApi.get.mockImplementation((path: string) => {
+      if (path === `/attendance/reports/daily?date=${PAST_DATE}`) return pending.promise
+      return baseGet(path)
+    })
+
+    fireEvent.change(summaryDateInput(), { target: { value: PAST_DATE } })
+    await waitFor(() => expect(mockApi.get).toHaveBeenCalledWith(`/attendance/reports/daily?date=${PAST_DATE}`))
+
+    // Clear the date before the in-flight request for PAST_DATE resolves.
+    fireEvent.change(summaryDateInput(), { target: { value: '' } })
+    expect(await screen.findByText(/select a date/i)).toBeInTheDocument()
+
+    await act(async () => {
+      pending.resolve([{ section: { id: 's5a', name: 'A' }, summary: { present: 2, absent: 1, leave: 0 } }])
+    })
+
+    // The stale response must not repopulate the table now that the date input is empty.
+    expect(screen.getByText(/select a date/i)).toBeInTheDocument()
+    const section = dailySummarySection()
+    expect(within(section).queryByText('2')).not.toBeInTheDocument()
+  })
+
+  it('own addition: clearing the month mid-flight discards the stale monthly report response', async () => {
+    const fixture = defaultFixture()
+    setupGet(fixture)
+    renderPage()
+    await waitForBrowseReady()
+
+    const pending = deferred<MonthlyReportRow[]>()
+    const baseGet = mockApi.get.getMockImplementation() as (path: string) => Promise<unknown>
+    mockApi.get.mockImplementation((path: string) => {
+      if (path === `/attendance/reports/monthly?sectionId=s5a&month=${MONTH}`) return pending.promise
+      return baseGet(path)
+    })
+
+    fireEvent.change(monthlySectionSelect(), { target: { value: 's5a' } })
+    fireEvent.change(monthlyMonthInput(), { target: { value: MONTH } })
+    await waitFor(() =>
+      expect(mockApi.get).toHaveBeenCalledWith(`/attendance/reports/monthly?sectionId=s5a&month=${MONTH}`),
+    )
+
+    // Clear the month before the in-flight request resolves.
+    fireEvent.change(monthlyMonthInput(), { target: { value: '' } })
+    expect(await screen.findByText(/select a section/i)).toBeInTheDocument()
+
+    await act(async () => {
+      pending.resolve([
+        { student: { id: 'st-stale', name: 'Stale Student' }, present: 5, absent: 0, leave: 0, markedDays: 5, percentage: 100 },
+      ])
+    })
+
+    // The stale response must not repopulate the table now that the month input is empty.
+    expect(screen.getByText(/select a section/i)).toBeInTheDocument()
+    expect(screen.queryByText('Stale Student')).not.toBeInTheDocument()
   })
 })
