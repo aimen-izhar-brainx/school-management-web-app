@@ -18,7 +18,7 @@ function renderPage(overrides: Partial<Parameters<typeof AdminDashboardPage>[0]>
   const props = {
     user,
     onOpenProfile: vi.fn(),
-    onOpenAdminCreate: vi.fn(),
+    onOpenPeople: vi.fn(),
     onOpenClasses: vi.fn(),
     onOpenTimetable: vi.fn(),
     onOpenAttendance: vi.fn(),

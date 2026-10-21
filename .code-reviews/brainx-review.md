@@ -1,72 +1,42 @@
 ---
-diff_hash: 461a4e696b87cbd478b4526355e2bf5bed442d6565c1eb870d3c899866b25aa2
-reviewed_at: 2026-10-20T13:00:00Z
+diff_hash: f600a1692dcac8f2d38ca86087149a54e642d0abebb7f37db3841cf8ba6ebea8
+reviewed_at: 2026-10-21T08:24:07Z
 ---
 
 ## Summary
 
-Adds Student and Teacher profiles (Prisma models + migration), admin-only CRUD modules for each, and a reusable `@Roles()` / `RolesGuard`. Stack: NestJS 12 + Prisma 7. Backend-only diff, so there is no cross-repo contract to check. Re-review: all previous findings are fixed except one style item. The student and teacher list endpoints are now paginated via `PaginationDto`, and the stray `pg` import is gone. Open: `teachers.module.ts` still uses double quotes.
+Stack: NestJS 12 backend and React 19 frontend, in one repo. The change wires the frontend to the existing `/teachers` and `/students` APIs. It adds a paginated People directory (`PeopleListPage`) with delete, a `lib/people.ts` API client, API-backed create forms for teachers and students in `AdminCreatePage`, and `patch`/`delete` helpers on `api`. The dashboard Students card now opens the directory and a Teachers card is new. The backend change in `teachers.service.ts` is a formatting and indentation cleanup plus a `toConflict` helper that returns the same P2002 → 409 behaviour. The frontend request and response shapes match the backend DTOs and `PaginationDto` (page/limit, `{ data, meta }`, 204 on delete). I found no correctness or security defects. Only low-severity cleanups remain.
 
 ## Findings
 
-### Critical (1)
-- **backend/src/teachers/teachers.service.ts:85** — `remove` updated a non-existent `user.isActive` column. *(correctness)*
-  - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: `remove` now hard-deletes the user (profile cascades), matching the students module. No `isActive` reference remains. Note `Teacher.deletedAt` is still in the schema and filtered in `findOne`, but is now never written.
+### Critical (0)
 
-### High (3)
-- **backend/src/teachers/teachers.service.ts:17** — `create` skipped the `meetsPasswordRules` check. *(security)*
-  - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: `create` now calls `meetsPasswordRules` before hashing.
-- **backend/src/teachers/teachers.service.ts:20,57** — Email was not trimmed or lowercased. *(correctness)*
-  - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: `create` and `update` now use `email.trim().toLowerCase()`.
-- **backend/src/students/students.service.ts:16** — `findAll` is an unbounded `findMany` with no pagination. *(performance)*
-  - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: `findAll` now takes `PaginationDto` (page, limit capped at 100) and returns `{ data, meta }`. The global ValidationPipe has `transform: true`, so the defaults apply.
+### High (0)
 
-### Medium (4)
-- **backend/src/teachers/teachers.controller.ts:2** — `import { Query } from "pg"` is unused and is the wrong symbol. *(maintainability)*
-  - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: The `pg` import is removed. `Query` now comes from `@nestjs/common`.
-- **backend/src/teachers/teachers.controller.ts:14** — The teachers controller has no `findAll` list endpoint, unlike students. *(consistency)*
-  - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: A paginated `@Get()` list now exists and the service filters on `deletedAt: null`.
-- **backend/src/students/students.service.ts:35,59** — No handling of Prisma `P2002` after the uniqueness pre-check. *(correctness)*
-  - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: `create` and `update` now wrap the write and map P2002 to `ConflictException` via `toConflict`.
-- **backend/src/teachers/teachers.service.ts:84 vs backend/src/students/students.service.ts:83** — Inconsistent deletion policy, and teacher DTOs lack schema fields (`gender`, `dateOfBirth`, `address`). *(consistency)*
-  - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: Deletion policy is aligned (both hard-delete). `CreateTeacherDto` now declares `gender`, `dateOfBirth` and `address`, and the service writes them on create and update.
+### Medium (0)
 
 ### Low (3)
-- **backend/prisma/schema.prisma:59-91** — Inconsistent formatting; free-string `gender`/`grade`. *(style)*
-  - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: `prisma format --check` now passes. The enum suggestion was optional and is not required for this to be fixed.
-- **backend/src/teachers/dto/create-teacher.dto.ts:1** — The `Validate` import is unused, and the teacher files use double quotes (the controller still does). *(style)*
+- **frontend/src/lib/http.ts:49** — `api.patch` is added but nothing calls it; update is not part of this change. *(maintainability)*
   - status: open
   - dev_reasoning: N/A
-  - ai_reasoning: The `Validate` import is gone, and the DTO and controller now use single quotes. `teachers.module.ts` (lines 2-3) still uses double quotes. Run the formatter.
-- **backend/tsconfig.build.tsbuildinfo** — Tracked build artifact. *(maintainability)*
-  - status: fixed
+  - ai_reasoning: Remove it until an edit screen needs it, or confirm it is intentionally staged for the next ticket.
+- **frontend/src/lib/people.ts:68-72** — `withoutBlanks` drops blank optional fields but sends non-blank ones untrimmed (`phone`, `address`, `section`, `gender`, `dateOfBirth`). Values such as `" A "` are stored with the padding. *(correctness)*
+  - status: open
   - dev_reasoning: N/A
-  - ai_reasoning: The file is deleted from the index and `*.tsbuildinfo` is in `backend/.gitignore`.
+  - ai_reasoning: Trim string values in `withoutBlanks` (map to `value.trim()`), or trim at the call sites in `AdminCreatePage`, as is already done for required fields.
+- **frontend/src/components/PeopleListPage.tsx:12** — The directory page imports `PersonTab` from `AdminCreatePage`, so one page component depends on another for a shared type, and `AdminDashboardPage` now imports from `PeopleListPage` as well. After creating a person, `AdminCreatePage`'s Back button goes to the dashboard rather than the directory the admin came from. *(consistency)*
+  - status: open
+  - dev_reasoning: N/A
+  - ai_reasoning: Move `PersonTab` and `DirectoryTab` into a small shared types module (for example `lib/people.ts`). Optionally make Back return to `admin-people` when the create page was opened from the directory.
 
 ## Reviewed files
-- backend/package.json, backend/package-lock.json
-- backend/prisma/schema.prisma
-- backend/prisma/migrations/20261016085820_add_student_teacher/migration.sql
-- backend/src/app.module.ts
-- backend/src/auth/roles.decorator.ts, roles.guard.ts
-- backend/src/students/* (controller, module, service, dto)
-- backend/src/teachers/* (controller, module, service, dto)
-- backend/tsconfig.build.tsbuildinfo (removed)
+- backend/src/teachers/teachers.service.ts (formatting plus `toConflict` extraction)
+- frontend/src/App.tsx
+- frontend/src/lib/http.ts
+- frontend/src/lib/people.ts (new)
+- frontend/src/components/PeopleListPage.tsx (new)
+- frontend/src/components/PeopleListPage.test.tsx (new, skimmed)
+- frontend/src/components/AdminCreatePage.tsx
+- frontend/src/components/AdminCreatePage.test.tsx (skimmed)
+- frontend/src/components/AdminDashboardPage.tsx
+- frontend/src/components/AdminDashboardPage.test.tsx (skimmed)

@@ -17,13 +17,13 @@ import {
 import { getRole } from '../data/roles'
 import { SECTION_OPTIONS, TEACHERS } from '../data/timetable'
 import type { AuthUser } from '../lib/auth'
-import type { PersonTab } from './AdminCreatePage'
 import { DashboardShell } from './DashboardShell'
+import type { DirectoryTab } from '../lib/people'
 
 interface AdminDashboardPageProps {
   user: AuthUser
   onOpenProfile: () => void
-  onOpenAdminCreate: (tab: PersonTab) => void
+  onOpenPeople: (tab: DirectoryTab) => void
   onOpenClasses: () => void
   onOpenTimetable: () => void
   onOpenAttendance: () => void
@@ -52,7 +52,7 @@ interface ComingSoonItem {
 export function AdminDashboardPage({
   user,
   onOpenProfile,
-  onOpenAdminCreate,
+  onOpenPeople,
   onOpenClasses,
   onOpenTimetable,
   onOpenAttendance,
@@ -72,11 +72,20 @@ export function AdminDashboardPage({
     {
       key: 'students',
       label: 'Students',
-      description: 'Enrol & manage student records',
+      description: 'Browse, enrol & manage students',
       icon: GraduationCap,
       iconWrap: 'bg-emerald-50 text-emerald-600',
       hover: 'hover:border-emerald-200 hover:bg-emerald-50',
-      onClick: () => onOpenAdminCreate('student'),
+      onClick: () => onOpenPeople('student'),
+    },
+    {
+      key: 'teachers',
+      label: 'Teachers',
+      description: 'Browse, add & manage teachers',
+      icon: Users,
+      iconWrap: 'bg-blue-50 text-blue-600',
+      hover: 'hover:border-blue-200 hover:bg-blue-50',
+      onClick: () => onOpenPeople('teacher'),
     },
     {
       key: 'classes',

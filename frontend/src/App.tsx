@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AdminCreatePage, type PersonTab } from './components/AdminCreatePage'
+import { AdminCreatePage } from './components/AdminCreatePage'
 import { AdminDashboardPage } from './components/AdminDashboardPage'
 import { AttendancePage } from './components/AttendancePage'
 import { ClassesPage } from './components/ClassesPage'
@@ -8,11 +8,13 @@ import { LoginPage } from './components/LoginPage'
 import { MarkAttendancePage } from './components/MarkAttendancePage'
 import { MyAttendancePage } from './components/MyAttendancePage'
 import { MyTimetablePage } from './components/MyTimetablePage'
+import { PeopleListPage } from './components/PeopleListPage'
 import { NoticeBoardPage } from './components/NoticeBoardPage'
 import { ProfilePage } from './components/ProfilePage'
 import { ResetPasswordPage } from './components/ResetPasswordPage'
 import { RoleHome } from './components/RoleHome'
 import { TimetablePage } from './components/TimetablePage'
+import type { DirectoryTab, PersonTab } from './lib/people'
 import { logout, restoreSession, type AuthSession } from './lib/auth'
 
 type View =
@@ -22,6 +24,7 @@ type View =
   | { name: 'home' }
   | { name: 'profile' }
   | { name: 'admin-create'; tab: PersonTab }
+  | { name: 'admin-people'; tab: DirectoryTab }
   | { name: 'admin-classes' }
   | { name: 'admin-timetable' }
   | { name: 'admin-attendance' }
@@ -102,6 +105,18 @@ function App() {
       )
     }
 
+    if (view.name === 'admin-people') {
+      return (
+        <PeopleListPage
+          user={session.user}
+          initialTab={view.tab}
+          onBack={() => goTo({ name: 'home' })}
+          onAdd={(tab) => goTo({ name: 'admin-create', tab })}
+          onSignOut={handleSignOut}
+        />
+      )
+    }
+
     if (view.name === 'admin-classes') {
       return (
         <ClassesPage user={session.user} onBack={() => goTo({ name: 'home' })} onSignOut={handleSignOut} />
@@ -149,7 +164,7 @@ function App() {
         <AdminDashboardPage
           user={session.user}
           onOpenProfile={() => goTo({ name: 'profile' })}
-          onOpenAdminCreate={(tab) => goTo({ name: 'admin-create', tab })}
+          onOpenPeople={(tab) => goTo({ name: 'admin-people', tab })}
           onOpenClasses={() => goTo({ name: 'admin-classes' })}
           onOpenTimetable={() => goTo({ name: 'admin-timetable' })}
           onOpenAttendance={() => goTo({ name: 'admin-attendance' })}

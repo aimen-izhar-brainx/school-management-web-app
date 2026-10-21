@@ -1,8 +1,15 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import '@testing-library/jest-dom'
 import { AdminCreatePage } from './AdminCreatePage'
 import type { AuthUser } from '../lib/auth'
+import { createStudent, createTeacher, PeopleError } from '../lib/people'
+
+vi.mock('../lib/people', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/people')>()),
+  createTeacher: vi.fn(),
+  createStudent: vi.fn(),
+}))
 
 // Tests for T-003: migrate AdminCreatePage's own header/main markup to the
 // shared DashboardShell (T-002), with no visible or behavioral change.
@@ -36,6 +43,7 @@ function submitActiveForm(container: HTMLElement) {
 describe('AdminCreatePage', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.clearAllMocks()
   })
 
   it('AC-01.1 header shows the GraduationCap icon and "Brainx School" text', () => {
@@ -124,7 +132,7 @@ describe('AdminCreatePage — T-006 email/name validation regression (pre-migrat
     fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'taylor@example.com' } })
     submitActiveForm(container)
 
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).not.toHaveTextContent('valid email')
   })
 
   it('AC-02.4 parent tab: a syntactically valid email shows no email-format error on submit', () => {
@@ -137,14 +145,67 @@ describe('AdminCreatePage — T-006 email/name validation regression (pre-migrat
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('success-path (unchanged): teacher tab with valid name+email shows "Teacher account created for Taylor Teacher." exactly', () => {
+  it('success-path: teacher tab saves via the API and shows "Teacher account created for Taylor Teacher."', async () => {
+    vi.mocked(createTeacher).mockResolvedValue({} as never)
     const { container } = renderPage({ initialTab: 'teacher' })
 
     fireEvent.change(screen.getByLabelText(/full name/i), { target: { value: 'Taylor Teacher' } })
     fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'taylor@example.com' } })
+    fireEvent.change(screen.getByLabelText(/temporary password/i), { target: { value: 'Str0ng!pass' } })
+    fireEvent.change(screen.getByLabelText(/employee id/i), { target: { value: 'T-100' } })
+    fireEvent.change(screen.getByLabelText(/subject/i), { target: { value: 'Maths' } })
     submitActiveForm(container)
 
-    expect(screen.getByText('Teacher account created for Taylor Teacher.')).toBeInTheDocument()
+    expect(await screen.findByText('Teacher account created for Taylor Teacher.')).toBeInTheDocument()
+    expect(createTeacher).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Taylor Teacher', email: 'taylor@example.com', employeeId: 'T-100', subject: 'Maths' }),
+    )
+  })
+
+  it('teacher tab: shows the server error (e.g. duplicate email) and keeps the form filled', async () => {
+    vi.mocked(createTeacher).mockRejectedValue(new PeopleError('Email or employee ID already exists'))
+    const { container } = renderPage({ initialTab: 'teacher' })
+
+    fireEvent.change(screen.getByLabelText(/full name/i), { target: { value: 'Taylor Teacher' } })
+    fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'taylor@example.com' } })
+    fireEvent.change(screen.getByLabelText(/temporary password/i), { target: { value: 'Str0ng!pass' } })
+    fireEvent.change(screen.getByLabelText(/employee id/i), { target: { value: 'T-100' } })
+    fireEvent.change(screen.getByLabelText(/subject/i), { target: { value: 'Maths' } })
+    submitActiveForm(container)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Email or employee ID already exists')
+    expect(screen.getByLabelText(/full name/i)).toHaveValue('Taylor Teacher')
+  })
+
+  it('teacher tab: a weak password is rejected before any request is sent', () => {
+    const { container } = renderPage({ initialTab: 'teacher' })
+
+    fireEvent.change(screen.getByLabelText(/full name/i), { target: { value: 'Taylor Teacher' } })
+    fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'taylor@example.com' } })
+    fireEvent.change(screen.getByLabelText(/temporary password/i), { target: { value: 'weak' } })
+    submitActiveForm(container)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Password must meet all the strength requirements.')
+    expect(createTeacher).not.toHaveBeenCalled()
+  })
+
+  it('student tab: saves via the API with the guardian and login fields', async () => {
+    vi.mocked(createStudent).mockResolvedValue({} as never)
+    const { container } = renderPage({ initialTab: 'student' })
+
+    fireEvent.change(screen.getByLabelText(/full name/i), { target: { value: 'Sam Student' } })
+    fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'sam@example.com' } })
+    fireEvent.change(screen.getByLabelText(/temporary password/i), { target: { value: 'Str0ng!pass' } })
+    fireEvent.change(screen.getByLabelText(/class \/ grade/i), { target: { value: 'Grade 3' } })
+    fireEvent.change(screen.getByLabelText(/roll number/i), { target: { value: 'R-7' } })
+    fireEvent.change(screen.getByLabelText(/guardian name/i), { target: { value: 'Gina Guardian' } })
+    fireEvent.change(screen.getByLabelText(/guardian phone/i), { target: { value: '555-0100' } })
+    submitActiveForm(container)
+
+    await waitFor(() => expect(screen.getByText('Student account created for Sam Student.')).toBeInTheDocument())
+    expect(createStudent).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Sam Student', rollNumber: 'R-7', grade: 'Grade 3', guardianName: 'Gina Guardian' }),
+    )
   })
 
   it('success-path (unchanged): parent tab with valid name+email shows "Parent account created for Pat Parent." exactly', () => {

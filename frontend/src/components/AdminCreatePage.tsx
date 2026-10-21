@@ -1,9 +1,12 @@
 import { CircleCheck, GraduationCap, UserRound, Users } from 'lucide-react'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import type { AuthUser } from '../lib/auth'
+import { createStudent, createTeacher, type PersonTab } from '../lib/people'
+import { passwordRules } from '../lib/password'
 import { isValidEmail } from '../lib/validators'
 import { DashboardShell } from './DashboardShell'
 import { Input } from './Input'
+import { PasswordField } from './PasswordField'
 import { Select } from './Select'
 
 interface AdminCreatePageProps {
@@ -14,7 +17,6 @@ interface AdminCreatePageProps {
   onSignOut: () => void
 }
 
-export type PersonTab = 'teacher' | 'student' | 'parent'
 
 const tabs: { id: PersonTab; label: string; icon: typeof Users; activeClasses: string; badgeClasses: string }[] = [
   {
@@ -43,6 +45,7 @@ const tabs: { id: PersonTab; label: string; icon: typeof Users; activeClasses: s
 interface TeacherForm {
   fullName: string
   email: string
+  password: string
   phone: string
   employeeId: string
   subject: string
@@ -54,6 +57,7 @@ interface TeacherForm {
 const emptyTeacherForm: TeacherForm = {
   fullName: '',
   email: '',
+  password: '',
   phone: '',
   employeeId: '',
   subject: '',
@@ -64,12 +68,13 @@ const emptyTeacherForm: TeacherForm = {
 
 interface StudentForm {
   fullName: string
+  email: string
+  password: string
   dateOfBirth: string
   gender: string
   grade: string
   section: string
   rollNumber: string
-  admissionDate: string
   guardianName: string
   guardianPhone: string
   address: string
@@ -77,12 +82,13 @@ interface StudentForm {
 
 const emptyStudentForm: StudentForm = {
   fullName: '',
+  email: '',
+  password: '',
   dateOfBirth: '',
   gender: '',
   grade: '',
   section: '',
   rollNumber: '',
-  admissionDate: '',
   guardianName: '',
   guardianPhone: '',
   address: '',
@@ -114,17 +120,19 @@ const gradeOptions = [
 ]
 const relationshipOptions = ['Father', 'Mother', 'Guardian']
 
-/** Admin-only screens for adding teachers, students and parents. UI only — nothing is persisted yet. */
+/** Admin-only screens for adding teachers, students and parents. Teachers and students are saved through the API; parents are still UI only. */
 export function AdminCreatePage({ user, initialTab, onBack, onSignOut }: AdminCreatePageProps) {
   const [tab, setTab] = useState<PersonTab>(initialTab)
 
   const [teacherForm, setTeacherForm] = useState<TeacherForm>(emptyTeacherForm)
   const [teacherError, setTeacherError] = useState<string | null>(null)
   const [teacherCreated, setTeacherCreated] = useState<string | null>(null)
+  const [teacherSubmitting, setTeacherSubmitting] = useState(false)
 
   const [studentForm, setStudentForm] = useState<StudentForm>(emptyStudentForm)
   const [studentError, setStudentError] = useState<string | null>(null)
   const [studentCreated, setStudentCreated] = useState<string | null>(null)
+  const [studentSubmitting, setStudentSubmitting] = useState(false)
 
   const [parentForm, setParentForm] = useState<ParentForm>(emptyParentForm)
   const [parentError, setParentError] = useState<string | null>(null)
@@ -136,12 +144,13 @@ export function AdminCreatePage({ user, initialTab, onBack, onSignOut }: AdminCr
     setTab(next)
   }
 
-  const handleCreateTeacher = (event: FormEvent<HTMLFormElement>) => {
+  const handleCreateTeacher = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setTeacherError(null)
     setTeacherCreated(null)
 
-    if (!teacherForm.fullName.trim()) {
+    const name = teacherForm.fullName.trim()
+    if (!name) {
       setTeacherError('Please enter the teacher’s full name.')
       return
     }
@@ -149,27 +158,90 @@ export function AdminCreatePage({ user, initialTab, onBack, onSignOut }: AdminCr
       setTeacherError('Please enter a valid email address.')
       return
     }
+    if (!passwordRules.every((rule) => rule.test(teacherForm.password))) {
+      setTeacherError('Password must meet all the strength requirements.')
+      return
+    }
+    if (!teacherForm.employeeId.trim() || !teacherForm.subject.trim()) {
+      setTeacherError('Please enter the employee ID and subject.')
+      return
+    }
 
-    setTeacherCreated(teacherForm.fullName.trim())
-    setTeacherForm(emptyTeacherForm)
+    setTeacherSubmitting(true)
+    try {
+      await createTeacher({
+        name,
+        email: teacherForm.email.trim(),
+        password: teacherForm.password,
+        employeeId: teacherForm.employeeId.trim(),
+        subject: teacherForm.subject.trim(),
+        phone: teacherForm.phone,
+        gender: teacherForm.gender,
+        address: teacherForm.address,
+        joinedAt: teacherForm.joiningDate,
+      })
+      setTeacherCreated(name)
+      setTeacherForm(emptyTeacherForm)
+    } catch (cause) {
+      setTeacherError(cause instanceof Error ? cause.message : 'Could not create the teacher.')
+    } finally {
+      setTeacherSubmitting(false)
+    }
   }
 
-  const handleCreateStudent = (event: FormEvent<HTMLFormElement>) => {
+  const handleCreateStudent = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setStudentError(null)
     setStudentCreated(null)
 
-    if (!studentForm.fullName.trim()) {
+    const name = studentForm.fullName.trim()
+    if (!name) {
       setStudentError('Please enter the student’s full name.')
+      return
+    }
+    if (!isValidEmail(studentForm.email)) {
+      setStudentError('Please enter a valid email address.')
+      return
+    }
+    if (!passwordRules.every((rule) => rule.test(studentForm.password))) {
+      setStudentError('Password must meet all the strength requirements.')
       return
     }
     if (!studentForm.grade) {
       setStudentError('Please select a class / grade.')
       return
     }
+    if (!studentForm.rollNumber.trim()) {
+      setStudentError('Please enter the roll number.')
+      return
+    }
+    if (!studentForm.guardianName.trim() || !studentForm.guardianPhone.trim()) {
+      setStudentError('Please enter the guardian’s name and phone.')
+      return
+    }
 
-    setStudentCreated(studentForm.fullName.trim())
-    setStudentForm(emptyStudentForm)
+    setStudentSubmitting(true)
+    try {
+      await createStudent({
+        name,
+        email: studentForm.email.trim(),
+        password: studentForm.password,
+        rollNumber: studentForm.rollNumber.trim(),
+        grade: studentForm.grade,
+        guardianName: studentForm.guardianName.trim(),
+        guardianPhone: studentForm.guardianPhone.trim(),
+        section: studentForm.section,
+        gender: studentForm.gender,
+        dateOfBirth: studentForm.dateOfBirth,
+        address: studentForm.address,
+      })
+      setStudentCreated(name)
+      setStudentForm(emptyStudentForm)
+    } catch (cause) {
+      setStudentError(cause instanceof Error ? cause.message : 'Could not create the student.')
+    } finally {
+      setStudentSubmitting(false)
+    }
   }
 
   const handleCreateParent = (event: FormEvent<HTMLFormElement>) => {
@@ -228,6 +300,7 @@ export function AdminCreatePage({ user, initialTab, onBack, onSignOut }: AdminCr
               onSubmit={handleCreateTeacher}
               error={teacherError}
               created={teacherCreated}
+              submitting={teacherSubmitting}
             />
           )}
 
@@ -238,6 +311,7 @@ export function AdminCreatePage({ user, initialTab, onBack, onSignOut }: AdminCr
               onSubmit={handleCreateStudent}
               error={studentError}
               created={studentCreated}
+              submitting={studentSubmitting}
             />
           )}
 
@@ -262,18 +336,20 @@ function TeacherFormSection({
   onSubmit,
   error,
   created,
+  submitting,
 }: {
   form: TeacherForm
   onChange: (field: keyof TeacherForm, value: string) => void
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
   error: string | null
   created: string | null
+  submitting: boolean
 }) {
   return (
     <div>
       <h2 className="mt-4 text-2xl font-bold text-slate-900">Add teacher</h2>
       <p className="mt-2 text-sm text-slate-500">
-        They&rsquo;ll get an email invite to set their password.
+        Create the teacher&rsquo;s account and give them a starting password.
       </p>
 
       <form onSubmit={onSubmit} className="mt-8 space-y-4" noValidate>
@@ -291,6 +367,14 @@ function TeacherFormSection({
           autoComplete="email"
           value={form.email}
           onChange={(value) => onChange('email', value)}
+        />
+        <PasswordField
+          id="teacher-password"
+          label="Temporary password"
+          autoComplete="new-password"
+          placeholder="Min. 8 chars, upper/lower, number, symbol"
+          value={form.password}
+          onChange={(value) => onChange('password', value)}
         />
         <Input
           id="teacher-phone"
@@ -339,9 +423,10 @@ function TeacherFormSection({
 
         <button
           type="submit"
-          className="flex items-center justify-center gap-2 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
+          disabled={submitting}
+          className="flex items-center justify-center gap-2 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600 disabled:opacity-60"
         >
-          Add teacher
+          {submitting ? 'Saving…' : 'Add teacher'}
         </button>
       </form>
     </div>
@@ -354,18 +439,20 @@ function StudentFormSection({
   onSubmit,
   error,
   created,
+  submitting,
 }: {
   form: StudentForm
   onChange: (field: keyof StudentForm, value: string) => void
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
   error: string | null
   created: string | null
+  submitting: boolean
 }) {
   return (
     <div>
       <h2 className="mt-4 text-2xl font-bold text-slate-900">Add student</h2>
       <p className="mt-2 text-sm text-slate-500">
-        Enrol a new student and link them to a guardian.
+        Enrol a new student, create their login and record a guardian.
       </p>
 
       <form onSubmit={onSubmit} className="mt-8 space-y-4" noValidate>
@@ -375,6 +462,22 @@ function StudentFormSection({
           autoComplete="name"
           value={form.fullName}
           onChange={(value) => onChange('fullName', value)}
+        />
+        <Input
+          id="student-email"
+          label="Email address"
+          type="email"
+          autoComplete="email"
+          value={form.email}
+          onChange={(value) => onChange('email', value)}
+        />
+        <PasswordField
+          id="student-password"
+          label="Temporary password"
+          autoComplete="new-password"
+          placeholder="Min. 8 chars, upper/lower, number, symbol"
+          value={form.password}
+          onChange={(value) => onChange('password', value)}
         />
         <Input
           id="student-dob"
@@ -411,13 +514,6 @@ function StudentFormSection({
           onChange={(value) => onChange('rollNumber', value)}
         />
         <Input
-          id="student-admission-date"
-          label="Admission date"
-          type="date"
-          value={form.admissionDate}
-          onChange={(value) => onChange('admissionDate', value)}
-        />
-        <Input
           id="student-guardian-name"
           label="Parent / Guardian name"
           value={form.guardianName}
@@ -442,9 +538,10 @@ function StudentFormSection({
 
         <button
           type="submit"
-          className="flex items-center justify-center gap-2 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
+          disabled={submitting}
+          className="flex items-center justify-center gap-2 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600 disabled:opacity-60"
         >
-          Add student
+          {submitting ? 'Saving…' : 'Add student'}
         </button>
       </form>
     </div>
