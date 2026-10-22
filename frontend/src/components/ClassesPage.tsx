@@ -1,6 +1,8 @@
 import { BookOpen, Pencil, Plus, Trash2, UserRound, Users, X } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import type { AuthUser } from '../lib/auth'
+import * as classesApi from '../lib/classes'
+import type { ApiClass, TeacherOption } from '../lib/classes'
 import { DashboardShell } from './DashboardShell'
 
 interface ClassesPageProps {
@@ -34,14 +36,6 @@ interface SchoolClass {
   sections: Section[]
 }
 
-const TEACHER_OPTIONS = [
-  { id: 't1', name: 'Grace Kim' },
-  { id: 't2', name: 'Daniel Ortiz' },
-  { id: 't3', name: 'Priya Nair' },
-  { id: 't4', name: 'Marcus Webb' },
-  { id: 't5', name: 'Sofia Rossi' },
-]
-
 const SUBJECT_LIBRARY = [
   'Mathematics',
   'English',
@@ -53,73 +47,34 @@ const SUBJECT_LIBRARY = [
   'Music',
 ]
 
-function teacherName(id: string | null): string | null {
-  return TEACHER_OPTIONS.find((teacher) => teacher.id === id)?.name ?? null
+function toSchoolClass(apiClass: ApiClass): SchoolClass {
+  return {
+    id: apiClass.id,
+    name: apiClass.name,
+    subjects: apiClass.subjects.map((subject) => ({ name: subject.subject, teacherId: subject.teacherId })),
+    sections: apiClass.sections.map((section) => ({
+      id: section.id,
+      name: section.name,
+      classTeacherId: section.classTeacherId,
+      roster: section.students.map((student) => ({
+        id: student.id,
+        name: student.user.name,
+        rollNumber: student.rollNumber,
+      })),
+    })),
+  }
 }
 
-let idCounter = 100
-function makeId(prefix: string): string {
-  idCounter += 1
-  return `${prefix}-${idCounter}`
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback
 }
-
-const initialClasses: SchoolClass[] = [
-  {
-    id: 'class-1',
-    name: 'Grade 5',
-    subjects: [
-      { name: 'Mathematics', teacherId: 't2' },
-      { name: 'English', teacherId: 't5' },
-      { name: 'Science', teacherId: null },
-    ],
-    sections: [
-      {
-        id: 'section-1',
-        name: 'A',
-        classTeacherId: 't1',
-        roster: [
-          { id: 's1', name: 'Ava Thompson', rollNumber: '501' },
-          { id: 's2', name: 'Liam Chen', rollNumber: '502' },
-          { id: 's3', name: 'Noah Patel', rollNumber: '503' },
-        ],
-      },
-      {
-        id: 'section-2',
-        name: 'B',
-        classTeacherId: null,
-        roster: [
-          { id: 's4', name: 'Emma Garcia', rollNumber: '504' },
-          { id: 's5', name: 'Oliver Wright', rollNumber: '505' },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'class-2',
-    name: 'Grade 6',
-    subjects: [
-      { name: 'Mathematics', teacherId: 't2' },
-      { name: 'Science', teacherId: 't4' },
-      { name: 'Computer Science', teacherId: null },
-    ],
-    sections: [
-      {
-        id: 'section-3',
-        name: 'A',
-        classTeacherId: 't3',
-        roster: [
-          { id: 's6', name: 'Isla Novak', rollNumber: '601' },
-          { id: 's7', name: 'Mateo Alvarez', rollNumber: '602' },
-        ],
-      },
-    ],
-  },
-]
-
-/** Admin-only screen for managing classes, sections, subjects and class teachers. UI only — nothing is persisted yet. */
+/** Admin-only screen for managing classes, sections, subjects and class teachers, backed by the /classes API. */
 export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
-  const [classes, setClasses] = useState<SchoolClass[]>(initialClasses)
-  const [selectedClassId, setSelectedClassId] = useState<string | null>(initialClasses[0]?.id ?? null)
+  const [classes, setClasses] = useState<SchoolClass[]>([])
+  const [teachers, setTeachers] = useState<TeacherOption[]>([])
+  const [loading, setLoading] = useState(true)
+  const [pageError, setPageError] = useState<string | null>(null)
+  const [selectedClassId, setSelectedClassId] = useState<string | null>(null)
   const [rosterSectionId, setRosterSectionId] = useState<string | null>(null)
 
   const [newClassName, setNewClassName] = useState('')
@@ -136,11 +91,38 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
   const selectedClass = classes.find((schoolClass) => schoolClass.id === selectedClassId) ?? null
   const rosterSection = selectedClass?.sections.find((section) => section.id === rosterSectionId) ?? null
 
-  const updateClass = (classId: string, updater: (schoolClass: SchoolClass) => SchoolClass) => {
-    setClasses((prev) => prev.map((schoolClass) => (schoolClass.id === classId ? updater(schoolClass) : schoolClass)))
+  const teacherName = (id: string | null): string | null => teachers.find((teacher) => teacher.id === id)?.name ?? null
+
+  const reload = useCallback(async () => {
+    const loaded = (await classesApi.listClasses()).map(toSchoolClass)
+    setClasses(loaded)
+    setSelectedClassId((current) => (loaded.some((c) => c.id === current) ? current : (loaded[0]?.id ?? null)))
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([reload(), classesApi.listTeacherOptions().then((options) => !cancelled && setTeachers(options))])
+      .catch((error) => !cancelled && setPageError(errorMessage(error, 'Could not load classes.')))
+      .finally(() => !cancelled && setLoading(false))
+    return () => {
+      cancelled = true
+    }
+  }, [reload])
+
+  /** Runs a mutation, then refreshes from the server so the screen always shows persisted state. */
+  const mutate = async (action: () => Promise<unknown>, onError: (message: string) => void = setPageError) => {
+    setPageError(null)
+    try {
+      await action()
+      await reload()
+      return true
+    } catch (error) {
+      onError(errorMessage(error, 'Something went wrong.'))
+      return false
+    }
   }
 
-  const handleAddClass = (event: FormEvent<HTMLFormElement>) => {
+  const handleAddClass = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setClassNameError(null)
 
@@ -154,10 +136,14 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
       return
     }
 
-    const created: SchoolClass = { id: makeId('class'), name, subjects: [], sections: [] }
-    setClasses((prev) => [...prev, created])
-    setSelectedClassId(created.id)
-    setNewClassName('')
+    try {
+      const created = await classesApi.createClass(name)
+      await reload()
+      setSelectedClassId(created.id)
+      setNewClassName('')
+    } catch (error) {
+      setClassNameError(errorMessage(error, 'Could not create the class.'))
+    }
   }
 
   const startRenameClass = (schoolClass: SchoolClass) => {
@@ -165,22 +151,22 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
     setEditingClassName(schoolClass.name)
   }
 
-  const commitRenameClass = (event: FormEvent<HTMLFormElement>) => {
+  const commitRenameClass = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const name = editingClassName.trim()
     if (editingClassId && name) {
-      updateClass(editingClassId, (schoolClass) => ({ ...schoolClass, name }))
+      const ok = await mutate(() => classesApi.renameClass(editingClassId, name))
+      if (!ok) return
     }
     setEditingClassId(null)
     setEditingClassName('')
   }
 
-  const handleDeleteClass = (id: string) => {
-    setClasses((prev) => prev.filter((schoolClass) => schoolClass.id !== id))
-    if (selectedClassId === id) setSelectedClassId(null)
+  const handleDeleteClass = async (id: string) => {
+    if (await mutate(() => classesApi.deleteClass(id)) && selectedClassId === id) setSelectedClassId(null)
   }
 
-  const handleAddSection = (event: FormEvent<HTMLFormElement>) => {
+  const handleAddSection = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setSectionError(null)
     if (!selectedClass) return
@@ -195,55 +181,32 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
       return
     }
 
-    const created: Section = { id: makeId('section'), name, classTeacherId: null, roster: [] }
-    updateClass(selectedClass.id, (schoolClass) => ({ ...schoolClass, sections: [...schoolClass.sections, created] }))
-    setNewSectionName('')
+    if (await mutate(() => classesApi.addSection(selectedClass.id, name), setSectionError)) setNewSectionName('')
   }
 
-  const handleDeleteSection = (sectionId: string) => {
-    if (!selectedClass) return
-    updateClass(selectedClass.id, (schoolClass) => ({
-      ...schoolClass,
-      sections: schoolClass.sections.filter((section) => section.id !== sectionId),
-    }))
-    if (rosterSectionId === sectionId) setRosterSectionId(null)
+  const handleDeleteSection = async (sectionId: string) => {
+    if (await mutate(() => classesApi.deleteSection(sectionId)) && rosterSectionId === sectionId) {
+      setRosterSectionId(null)
+    }
   }
 
-  const handleAssignTeacher = (sectionId: string, teacherId: string) => {
-    if (!selectedClass) return
-    updateClass(selectedClass.id, (schoolClass) => ({
-      ...schoolClass,
-      sections: schoolClass.sections.map((section) =>
-        section.id === sectionId ? { ...section, classTeacherId: teacherId || null } : section,
-      ),
-    }))
-  }
+  const handleAssignTeacher = (sectionId: string, teacherId: string) =>
+    mutate(() => classesApi.setSectionTeacher(sectionId, teacherId || null))
 
   const addSubject = (subject: string) => {
     if (!selectedClass) return
     if (selectedClass.subjects.some((existing) => existing.name === subject)) return
-    updateClass(selectedClass.id, (schoolClass) => ({
-      ...schoolClass,
-      subjects: [...schoolClass.subjects, { name: subject, teacherId: null }],
-    }))
+    return mutate(() => classesApi.upsertSubject(selectedClass.id, subject, null))
   }
 
   const removeSubject = (subject: string) => {
     if (!selectedClass) return
-    updateClass(selectedClass.id, (schoolClass) => ({
-      ...schoolClass,
-      subjects: schoolClass.subjects.filter((existing) => existing.name !== subject),
-    }))
+    return mutate(() => classesApi.removeSubject(selectedClass.id, subject))
   }
 
   const handleAssignSubjectTeacher = (subject: string, teacherId: string) => {
     if (!selectedClass) return
-    updateClass(selectedClass.id, (schoolClass) => ({
-      ...schoolClass,
-      subjects: schoolClass.subjects.map((existing) =>
-        existing.name === subject ? { ...existing, teacherId: teacherId || null } : existing,
-      ),
-    }))
+    return mutate(() => classesApi.upsertSubject(selectedClass.id, subject, teacherId || null))
   }
 
   const handleAddCustomSubject = (event: FormEvent<HTMLFormElement>) => {
@@ -260,6 +223,13 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
         <p className="mt-1 text-sm text-slate-500">
           Create classes and sections, assign subjects and class teachers for {user.name.split(' ')[0]}&rsquo;s school.
         </p>
+
+        {pageError && (
+          <p role="alert" className="mt-4 text-sm text-red-600">
+            {pageError}
+          </p>
+        )}
+        {loading && <p className="mt-4 text-sm text-slate-500">Loading classes&hellip;</p>}
 
         <div className="mt-8 flex flex-col gap-8 lg:flex-row">
           <aside className="shrink-0 lg:w-64">
@@ -394,7 +364,7 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
                           className="ml-auto rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
                         >
                           <option value="">Unassigned</option>
-                          {TEACHER_OPTIONS.map((teacher) => (
+                          {teachers.map((teacher) => (
                             <option key={teacher.id} value={teacher.id}>
                               {teacher.name}
                             </option>
@@ -484,7 +454,7 @@ export function ClassesPage({ user, onBack, onSignOut }: ClassesPageProps) {
                             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
                           >
                             <option value="">Unassigned</option>
-                            {TEACHER_OPTIONS.map((teacher) => (
+                            {teachers.map((teacher) => (
                               <option key={teacher.id} value={teacher.id}>
                                 {teacher.name}
                               </option>

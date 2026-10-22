@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import bcrypt from 'bcrypt';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -7,7 +12,10 @@ import { PaginationDto } from '../common/pagination.dto.js';
 import { CreateStudentDto } from './dto/create-student.dto.js';
 import { UpdateStudentDto } from './dto/update-student.dto.js';
 
-const INCLUDE_USER = { user: { select: { id: true, name: true, email: true } } } as const;
+const INCLUDE_USER = {
+  user: { select: { id: true, name: true, email: true } },
+  section: { include: { schoolClass: { select: { id: true, name: true } } } },
+} as const;
 
 @Injectable()
 export class StudentsService {
@@ -27,36 +35,44 @@ export class StudentsService {
   }
 
   async findOne(id: string) {
-    const student = await this.prisma.student.findUnique({ where: { id }, include: INCLUDE_USER });
+    const student = await this.prisma.student.findUnique({
+      where: { id },
+      include: INCLUDE_USER,
+    });
     if (!student) throw new NotFoundException('Student not found.');
     return student;
   }
 
   async create(dto: CreateStudentDto) {
     if (!meetsPasswordRules(dto.password)) {
-      throw new BadRequestException('Password does not meet the strength requirements.');
+      throw new BadRequestException(
+        'Password does not meet the strength requirements.',
+      );
     }
     const email = dto.email.trim().toLowerCase();
     const [emailTaken, rollTaken] = await Promise.all([
       this.prisma.user.findUnique({ where: { email } }),
       this.prisma.student.findUnique({ where: { rollNumber: dto.rollNumber } }),
     ]);
+    const section = await this.findSection(dto.sectionId);
     if (emailTaken) throw new ConflictException('Email is already in use.');
-    if (rollTaken) throw new ConflictException('Roll number is already in use.');
+    if (rollTaken)
+      throw new ConflictException('Roll number is already in use.');
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
     try {
       return await this.prisma.student.create({
         data: {
           rollNumber: dto.rollNumber,
-          grade: dto.grade,
-          section: dto.section,
+          section: section ? { connect: { id: section.id } } : undefined,
           gender: dto.gender,
           guardianName: dto.guardianName,
           guardianPhone: dto.guardianPhone,
           dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
           address: dto.address,
-          user: { create: { name: dto.name, email, passwordHash, role: 'student' } },
+          user: {
+            create: { name: dto.name, email, passwordHash, role: 'student' },
+          },
         },
         include: INCLUDE_USER,
       });
@@ -67,7 +83,7 @@ export class StudentsService {
 
   async update(id: string, dto: UpdateStudentDto) {
     const existing = await this.findOne(id);
-    const { name, email, dateOfBirth, rollNumber, ...rest } = dto;
+    const { name, email, dateOfBirth, rollNumber, sectionId, ...rest } = dto;
     const newEmail = email?.trim().toLowerCase();
 
     if (newEmail && newEmail !== existing.user.email) {
@@ -81,14 +97,20 @@ export class StudentsService {
       }
     }
 
+    const section = await this.findSection(sectionId);
+
     try {
       return await this.prisma.student.update({
         where: { id },
         data: {
           ...rest,
+          ...(section && { section: { connect: { id: section.id } } }),
           rollNumber,
           dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
-          user: name || newEmail ? { update: { name, email: newEmail } } : undefined,
+          user:
+            name || newEmail
+              ? { update: { name, email: newEmail } }
+              : undefined,
         },
         include: INCLUDE_USER,
       });
@@ -103,9 +125,22 @@ export class StudentsService {
     await this.prisma.user.delete({ where: { id: student.userId } });
   }
 
-  // Concurrent requests can pass the pre-checks and still hit the unique index.
+  // Class membership comes from the section.
+  private async findSection(sectionId?: string) {
+    if (!sectionId) return null;
+    const section = await this.prisma.section.findUnique({
+      where: { id: sectionId },
+      include: { schoolClass: { select: { name: true } } },
+    });
+    if (!section) throw new BadRequestException('Section not found.');
+    return section;
+  }
+
   private toConflict(e: unknown) {
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+    if (
+      e instanceof Prisma.PrismaClientKnownRequestError &&
+      e.code === 'P2002'
+    ) {
       return new ConflictException('Email or roll number is already in use.');
     }
     return e;

@@ -1,6 +1,7 @@
 import { CircleCheck, GraduationCap, UserRound, Users } from 'lucide-react'
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import type { AuthUser } from '../lib/auth'
+import { listClasses, type ApiClass } from '../lib/classes'
 import { createStudent, createTeacher, type PersonTab } from '../lib/people'
 import { passwordRules } from '../lib/password'
 import { isValidEmail } from '../lib/validators'
@@ -72,7 +73,7 @@ interface StudentForm {
   password: string
   dateOfBirth: string
   gender: string
-  grade: string
+  className: string
   section: string
   rollNumber: string
   guardianName: string
@@ -86,7 +87,7 @@ const emptyStudentForm: StudentForm = {
   password: '',
   dateOfBirth: '',
   gender: '',
-  grade: '',
+  className: '',
   section: '',
   rollNumber: '',
   guardianName: '',
@@ -113,11 +114,6 @@ const emptyParentForm: ParentForm = {
 }
 
 const genderOptions = ['Male', 'Female', 'Other']
-const gradeOptions = [
-  'Pre-K',
-  'Kindergarten',
-  ...Array.from({ length: 12 }, (_, index) => `Grade ${index + 1}`),
-]
 const relationshipOptions = ['Father', 'Mother', 'Guardian']
 
 /** Admin-only screens for adding teachers, students and parents. Teachers and students are saved through the API; parents are still UI only. */
@@ -137,6 +133,13 @@ export function AdminCreatePage({ user, initialTab, onBack, onSignOut }: AdminCr
   const [parentForm, setParentForm] = useState<ParentForm>(emptyParentForm)
   const [parentError, setParentError] = useState<string | null>(null)
   const [parentCreated, setParentCreated] = useState<string | null>(null)
+
+  const [classes, setClasses] = useState<ApiClass[]>([])
+  useEffect(() => {
+    listClasses()
+      .then(setClasses)
+      .catch(() => setClasses([]))
+  }, [])
 
   const activeTab = tabs.find((candidate) => candidate.id === tab) ?? tabs[0]
 
@@ -207,10 +210,6 @@ export function AdminCreatePage({ user, initialTab, onBack, onSignOut }: AdminCr
       setStudentError('Password must meet all the strength requirements.')
       return
     }
-    if (!studentForm.grade) {
-      setStudentError('Please select a class / grade.')
-      return
-    }
     if (!studentForm.rollNumber.trim()) {
       setStudentError('Please enter the roll number.')
       return
@@ -227,10 +226,11 @@ export function AdminCreatePage({ user, initialTab, onBack, onSignOut }: AdminCr
         email: studentForm.email.trim(),
         password: studentForm.password,
         rollNumber: studentForm.rollNumber.trim(),
-        grade: studentForm.grade,
         guardianName: studentForm.guardianName.trim(),
         guardianPhone: studentForm.guardianPhone.trim(),
-        section: studentForm.section,
+        sectionId: classes
+          .find((c) => c.name === studentForm.className)
+          ?.sections.find((sec) => sec.name === studentForm.section)?.id,
         gender: studentForm.gender,
         dateOfBirth: studentForm.dateOfBirth,
         address: studentForm.address,
@@ -306,6 +306,7 @@ export function AdminCreatePage({ user, initialTab, onBack, onSignOut }: AdminCr
 
           {tab === 'student' && (
             <StudentFormSection
+              classes={classes}
               form={studentForm}
               onChange={(field, value) => setStudentForm((prev) => ({ ...prev, [field]: value }))}
               onSubmit={handleCreateStudent}
@@ -434,6 +435,7 @@ function TeacherFormSection({
 }
 
 function StudentFormSection({
+  classes,
   form,
   onChange,
   onSubmit,
@@ -441,6 +443,7 @@ function StudentFormSection({
   created,
   submitting,
 }: {
+  classes: ApiClass[]
   form: StudentForm
   onChange: (field: keyof StudentForm, value: string) => void
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
@@ -448,6 +451,8 @@ function StudentFormSection({
   created: string | null
   submitting: boolean
 }) {
+  const classOptions = classes.map((c) => c.name)
+  const sectionOptions = classes.find((c) => c.name === form.className)?.sections.map((sec) => sec.name) ?? []
   return (
     <div>
       <h2 className="mt-4 text-2xl font-bold text-slate-900">Add student</h2>
@@ -494,18 +499,21 @@ function StudentFormSection({
           options={genderOptions}
         />
         <Select
-          id="student-grade"
-          label="Class / Grade"
-          value={form.grade}
-          onChange={(value) => onChange('grade', value)}
-          options={gradeOptions}
+          id="student-class"
+          label="Class"
+          value={form.className}
+          onChange={(value) => {
+            onChange('className', value)
+            onChange('section', '')
+          }}
+          options={classOptions}
         />
-        <Input
+        <Select
           id="student-section"
           label="Section"
-          placeholder="e.g. A"
           value={form.section}
           onChange={(value) => onChange('section', value)}
+          options={sectionOptions}
         />
         <Input
           id="student-roll-number"

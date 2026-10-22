@@ -1,5 +1,15 @@
 import {
-  Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Req, Res, UnauthorizedException, UseGuards,
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Req,
+  Res,
+  UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service.js';
@@ -18,23 +28,37 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
-    const { accessToken, refreshToken, rememberMe, refreshTokenExpiresAt, user } = await this.auth.login(
-      dto.email,
-      dto.password,
-      dto.rememberMe,
-    );
+  async login(
+    @Body() dto: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const {
+      accessToken,
+      refreshToken,
+      rememberMe,
+      refreshTokenExpiresAt,
+      user,
+    } = await this.auth.login(dto.email, dto.password, dto.rememberMe);
     this.setRefreshCookie(res, refreshToken, rememberMe, refreshTokenExpiresAt);
     return { token: accessToken, user };
   }
 
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+  async refresh(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const raw = req.cookies?.[REFRESH_COOKIE];
     if (!raw) throw new UnauthorizedException('Not signed in.');
 
-    const { accessToken, refreshToken, rememberMe, refreshTokenExpiresAt, user } = await this.auth.refresh(raw);
+    const {
+      accessToken,
+      refreshToken,
+      rememberMe,
+      refreshTokenExpiresAt,
+      user,
+    } = await this.auth.refresh(raw);
     this.setRefreshCookie(res, refreshToken, rememberMe, refreshTokenExpiresAt);
     return { token: accessToken, user };
   }
@@ -73,7 +97,12 @@ export class AuthController {
     return req.user;
   }
 
-  private setRefreshCookie(res: Response, token: string, rememberMe: boolean, expiresAt: Date) {
+  private setRefreshCookie(
+    res: Response,
+    token: string,
+    rememberMe: boolean,
+    expiresAt: Date,
+  ) {
     const isProd = process.env.NODE_ENV === 'production';
     res.cookie(REFRESH_COOKIE, token, {
       httpOnly: true,

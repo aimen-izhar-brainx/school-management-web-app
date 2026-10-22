@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import bcrypt from 'bcrypt';
@@ -7,7 +12,11 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { UsersService } from '../users/users.service.js';
 import type { JwtPayload } from './jwt.strategy.js';
-import { generateRawToken, hashToken, meetsPasswordRules } from './security.util.js';
+import {
+  generateRawToken,
+  hashToken,
+  meetsPasswordRules,
+} from './security.util.js';
 
 const PASSWORD_RESET_TTL_MINUTES = 30;
 
@@ -29,18 +38,20 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password.');
     }
 
-    const { token: refreshToken, expiresAt: refreshTokenExpiresAt } = await this.issueRefreshToken(
-      this.prisma,
-      user.id,
-      rememberMe,
-    );
+    const { token: refreshToken, expiresAt: refreshTokenExpiresAt } =
+      await this.issueRefreshToken(this.prisma, user.id, rememberMe);
 
     return {
       accessToken: this.signAccessToken(user.id, user.email, user.role),
       refreshToken,
       rememberMe,
       refreshTokenExpiresAt,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role },
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
     };
   }
 
@@ -54,23 +65,30 @@ export class AuthService {
     }
 
     const user = await this.users.findById(stored.userId);
-    if (!user) throw new UnauthorizedException('Session expired. Please sign in again.');
+    if (!user)
+      throw new UnauthorizedException('Session expired. Please sign in again.');
 
-    const { token: refreshToken, expiresAt: refreshTokenExpiresAt } = await this.prisma.$transaction(async (tx) => {
-      await tx.refreshToken.update({
-        where: { id: stored.id },
-        data: { revokedAt: new Date() },
+    const { token: refreshToken, expiresAt: refreshTokenExpiresAt } =
+      await this.prisma.$transaction(async (tx) => {
+        await tx.refreshToken.update({
+          where: { id: stored.id },
+          data: { revokedAt: new Date() },
+        });
+
+        return this.issueRefreshToken(tx, user.id, stored.longLived);
       });
-
-      return this.issueRefreshToken(tx, user.id, stored.longLived);
-    });
 
     return {
       accessToken: this.signAccessToken(user.id, user.email, user.role),
       refreshToken,
       rememberMe: stored.longLived,
       refreshTokenExpiresAt,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role },
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
     };
   }
 
@@ -107,9 +125,14 @@ export class AuthService {
     ]);
 
     // Don't hold the response open for the SMTP round-trip.
-    void this.mail.sendPasswordResetEmail(user.email, rawToken).catch((error: unknown) => {
-      this.logger.error(`Failed to send password reset email to ${user.email}`, error);
-    });
+    void this.mail
+      .sendPasswordResetEmail(user.email, rawToken)
+      .catch((error: unknown) => {
+        this.logger.error(
+          `Failed to send password reset email to ${user.email}`,
+          error,
+        );
+      });
   }
 
   async verifyResetToken(rawToken: string): Promise<{ email: string }> {
@@ -121,15 +144,23 @@ export class AuthService {
 
   async resetPassword(rawToken: string, password: string): Promise<void> {
     if (!meetsPasswordRules(password)) {
-      throw new BadRequestException('Your password does not meet all the requirements.');
+      throw new BadRequestException(
+        'Your password does not meet all the requirements.',
+      );
     }
 
     const record = await this.findValidResetToken(rawToken);
     const passwordHash = await bcrypt.hash(password, 12);
 
     await this.prisma.$transaction([
-      this.prisma.user.update({ where: { id: record.userId }, data: { passwordHash } }),
-      this.prisma.passwordResetToken.update({ where: { id: record.id }, data: { usedAt: new Date() } }),
+      this.prisma.user.update({
+        where: { id: record.userId },
+        data: { passwordHash },
+      }),
+      this.prisma.passwordResetToken.update({
+        where: { id: record.id },
+        data: { usedAt: new Date() },
+      }),
       this.prisma.refreshToken.updateMany({
         where: { userId: record.userId, revokedAt: null },
         data: { revokedAt: new Date() },
@@ -164,7 +195,10 @@ export class AuthService {
   ): Promise<{ token: string; expiresAt: Date }> {
     const rawToken = generateRawToken();
     const days = Number(
-      this.config.get(longLived ? 'JWT_REFRESH_TTL_DAYS_REMEMBER' : 'JWT_REFRESH_TTL_DAYS', '7'),
+      this.config.get(
+        longLived ? 'JWT_REFRESH_TTL_DAYS_REMEMBER' : 'JWT_REFRESH_TTL_DAYS',
+        '7',
+      ),
     );
     const expiresAt = new Date(Date.now() + days * 86_400_000);
 

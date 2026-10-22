@@ -22,7 +22,8 @@ export class MailService {
   /** Unlike ConfigService#getOrThrow, this also rejects "" so a blank .env value fails at boot instead of at send time. */
   private requireEnv(key: string): string {
     const value = this.config.get<string>(key, '');
-    if (!value) throw new Error(`Missing required environment variable: ${key}`);
+    if (!value)
+      throw new Error(`Missing required environment variable: ${key}`);
     return value;
   }
 

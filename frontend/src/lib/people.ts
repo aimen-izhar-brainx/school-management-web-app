@@ -27,8 +27,7 @@ export interface Teacher {
 export interface Student {
   id: string
   rollNumber: string
-  grade: string
-  section: string | null
+  section: { id: string; name: string; schoolClass: { id: string; name: string } } | null
   gender: string | null
   guardianName: string
   guardianPhone: string
@@ -54,10 +53,9 @@ export interface CreateStudentInput {
   email: string
   password: string
   rollNumber: string
-  grade: string
   guardianName: string
   guardianPhone: string
-  section?: string
+  sectionId?: string
   gender?: string
   dateOfBirth?: string
   address?: string

@@ -4,7 +4,12 @@ import { JwtService } from '@nestjs/jwt';
 import { Test, type TestingModule } from '@nestjs/testing';
 import bcrypt from 'bcrypt';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PasswordResetToken, RefreshToken, Role, User } from '../generated/prisma/client.js';
+import type {
+  PasswordResetToken,
+  RefreshToken,
+  Role,
+  User,
+} from '../generated/prisma/client.js';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { UsersService } from '../users/users.service.js';
@@ -37,7 +42,9 @@ function makeRefreshToken(overrides: Partial<RefreshToken> = {}): RefreshToken {
   };
 }
 
-function makeResetToken(overrides: Partial<PasswordResetToken> = {}): PasswordResetToken {
+function makeResetToken(
+  overrides: Partial<PasswordResetToken> = {},
+): PasswordResetToken {
   return {
     id: 'reset-1',
     tokenHash: hashToken('raw-reset-token'),
@@ -51,7 +58,10 @@ function makeResetToken(overrides: Partial<PasswordResetToken> = {}): PasswordRe
 
 describe('AuthService', () => {
   let service: AuthService;
-  let users: { findByEmail: ReturnType<typeof vi.fn>; findById: ReturnType<typeof vi.fn> };
+  let users: {
+    findByEmail: ReturnType<typeof vi.fn>;
+    findById: ReturnType<typeof vi.fn>;
+  };
   let prisma: {
     $transaction: ReturnType<typeof vi.fn>;
     refreshToken: {
@@ -72,7 +82,10 @@ describe('AuthService', () => {
   };
   let jwt: { sign: ReturnType<typeof vi.fn> };
   let mail: { sendPasswordResetEmail: ReturnType<typeof vi.fn> };
-  let config: { get: ReturnType<typeof vi.fn>; getOrThrow: ReturnType<typeof vi.fn> };
+  let config: {
+    get: ReturnType<typeof vi.fn>;
+    getOrThrow: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
     users = {
@@ -140,7 +153,12 @@ describe('AuthService', () => {
       expect(result.accessToken).toBe('signed-access-token');
       expect(typeof result.refreshToken).toBe('string');
       expect(result.refreshToken.length).toBeGreaterThan(0);
-      expect(result.user).toEqual({ id: user.id, name: user.name, email: user.email, role: user.role });
+      expect(result.user).toEqual({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      });
       expect(prisma.refreshToken.create).toHaveBeenCalledTimes(1);
       expect(prisma.refreshToken.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -164,7 +182,9 @@ describe('AuthService', () => {
       users.findByEmail.mockResolvedValue(null);
       const compareSpy = vi.spyOn(bcrypt, 'compare');
 
-      await expect(service.login('nobody@example.com', 'whatever')).rejects.toThrow(
+      await expect(
+        service.login('nobody@example.com', 'whatever'),
+      ).rejects.toThrow(
         new UnauthorizedException('Invalid email or password.'),
       );
       // Same error message as the wrong-password case, and no need to even call bcrypt.
@@ -213,7 +233,12 @@ describe('AuthService', () => {
       });
       expect(prisma.refreshToken.create).toHaveBeenCalledTimes(1);
       expect(prisma.refreshToken.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ userId: user.id, longLived: stored.longLived }) }),
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId: user.id,
+            longLived: stored.longLived,
+          }),
+        }),
       );
       expect(result.accessToken).toBe('signed-access-token');
       expect(typeof result.refreshToken).toBe('string');
@@ -230,7 +255,9 @@ describe('AuthService', () => {
     });
 
     it('AC-07.4 throws UnauthorizedException("Session expired. Please sign in again.") when the token is revoked', async () => {
-      prisma.refreshToken.findUnique.mockResolvedValue(makeRefreshToken({ revokedAt: new Date() }));
+      prisma.refreshToken.findUnique.mockResolvedValue(
+        makeRefreshToken({ revokedAt: new Date() }),
+      );
 
       await expect(service.refresh('revoked-token')).rejects.toThrow(
         new UnauthorizedException('Session expired. Please sign in again.'),
@@ -252,7 +279,9 @@ describe('AuthService', () => {
     it('UC-07-E1 rejects reuse of a stale token that was already rotated (revoked) by a prior refresh call', async () => {
       // Simulates calling `refresh` a second time with the same raw token after a prior
       // call already rotated (and thus revoked) it.
-      prisma.refreshToken.findUnique.mockResolvedValue(makeRefreshToken({ revokedAt: new Date() }));
+      prisma.refreshToken.findUnique.mockResolvedValue(
+        makeRefreshToken({ revokedAt: new Date() }),
+      );
 
       await expect(service.refresh('raw-refresh-token')).rejects.toThrow(
         new UnauthorizedException('Session expired. Please sign in again.'),
@@ -265,7 +294,9 @@ describe('AuthService', () => {
       const user = makeUser();
       users.findByEmail.mockResolvedValue(user);
 
-      await expect(service.requestPasswordReset(user.email)).resolves.toBeUndefined();
+      await expect(
+        service.requestPasswordReset(user.email),
+      ).resolves.toBeUndefined();
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       const [operations] = prisma.$transaction.mock.calls[0];
@@ -276,16 +307,23 @@ describe('AuthService', () => {
       });
       expect(prisma.passwordResetToken.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ userId: user.id, expiresAt: expect.any(Date) }),
+          data: expect.objectContaining({
+            userId: user.id,
+            expiresAt: expect.any(Date),
+          }),
         }),
       );
     });
 
     it('AC-07.5 resolves without throwing for an unknown email, only burning time via bcrypt.hash', async () => {
       users.findByEmail.mockResolvedValue(null);
-      const hashSpy = vi.spyOn(bcrypt, 'hash').mockResolvedValue('decoy-hash' as never);
+      const hashSpy = vi
+        .spyOn(bcrypt, 'hash')
+        .mockResolvedValue('decoy-hash' as never);
 
-      await expect(service.requestPasswordReset('nobody@example.com')).resolves.toBeUndefined();
+      await expect(
+        service.requestPasswordReset('nobody@example.com'),
+      ).resolves.toBeUndefined();
 
       expect(hashSpy).toHaveBeenCalledWith('nobody@example.com', 10);
       expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -300,9 +338,13 @@ describe('AuthService', () => {
     it('AC-07.6 updates passwordHash, marks the token usedAt, and revokes all active refresh tokens', async () => {
       const record = makeResetToken();
       prisma.passwordResetToken.findUnique.mockResolvedValue(record);
-      vi.spyOn(bcrypt, 'hash').mockResolvedValue('new-hashed-password' as never);
+      vi.spyOn(bcrypt, 'hash').mockResolvedValue(
+        'new-hashed-password' as never,
+      );
 
-      await expect(service.resetPassword('raw-reset-token', validPassword)).resolves.toBeUndefined();
+      await expect(
+        service.resetPassword('raw-reset-token', validPassword),
+      ).resolves.toBeUndefined();
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       const [operations] = prisma.$transaction.mock.calls[0];
@@ -326,16 +368,22 @@ describe('AuthService', () => {
     it('AC-07.7 throws BadRequestException("This reset link has expired.") when the token is missing', async () => {
       prisma.passwordResetToken.findUnique.mockResolvedValue(null);
 
-      await expect(service.resetPassword('missing-token', validPassword)).rejects.toThrow(
+      await expect(
+        service.resetPassword('missing-token', validPassword),
+      ).rejects.toThrow(
         new BadRequestException('This reset link has expired.'),
       );
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
     it('AC-07.7 throws BadRequestException("This reset link has expired.") when the token was already used', async () => {
-      prisma.passwordResetToken.findUnique.mockResolvedValue(makeResetToken({ usedAt: new Date() }));
+      prisma.passwordResetToken.findUnique.mockResolvedValue(
+        makeResetToken({ usedAt: new Date() }),
+      );
 
-      await expect(service.resetPassword('used-token', validPassword)).rejects.toThrow(
+      await expect(
+        service.resetPassword('used-token', validPassword),
+      ).rejects.toThrow(
         new BadRequestException('This reset link has expired.'),
       );
       expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -346,7 +394,9 @@ describe('AuthService', () => {
         makeResetToken({ expiresAt: new Date(Date.now() - 1000) }),
       );
 
-      await expect(service.resetPassword('expired-token', validPassword)).rejects.toThrow(
+      await expect(
+        service.resetPassword('expired-token', validPassword),
+      ).rejects.toThrow(
         new BadRequestException('This reset link has expired.'),
       );
       expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -354,7 +404,9 @@ describe('AuthService', () => {
 
     it('UC-07-E2 rejects a password that fails meetsPasswordRules before the token is even looked up', async () => {
       await expect(service.resetPassword('any-token', 'weak')).rejects.toThrow(
-        new BadRequestException('Your password does not meet all the requirements.'),
+        new BadRequestException(
+          'Your password does not meet all the requirements.',
+        ),
       );
 
       expect(prisma.passwordResetToken.findUnique).not.toHaveBeenCalled();
@@ -373,7 +425,9 @@ describe('AuthService', () => {
     });
 
     it('AC-07.7 throws BadRequestException("This reset link has expired.") when the token was already used', async () => {
-      prisma.passwordResetToken.findUnique.mockResolvedValue(makeResetToken({ usedAt: new Date() }));
+      prisma.passwordResetToken.findUnique.mockResolvedValue(
+        makeResetToken({ usedAt: new Date() }),
+      );
 
       await expect(service.verifyResetToken('used-token')).rejects.toThrow(
         new BadRequestException('This reset link has expired.'),
@@ -392,10 +446,14 @@ describe('AuthService', () => {
 
     it('AC-07.7 resolves with the account email for a valid, unused, unexpired token', async () => {
       const user = makeUser();
-      prisma.passwordResetToken.findUnique.mockResolvedValue(makeResetToken({ userId: user.id }));
+      prisma.passwordResetToken.findUnique.mockResolvedValue(
+        makeResetToken({ userId: user.id }),
+      );
       users.findById.mockResolvedValue(user);
 
-      await expect(service.verifyResetToken('raw-reset-token')).resolves.toEqual({ email: user.email });
+      await expect(
+        service.verifyResetToken('raw-reset-token'),
+      ).resolves.toEqual({ email: user.email });
     });
   });
 });

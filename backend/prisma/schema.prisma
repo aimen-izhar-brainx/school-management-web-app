@@ -29,6 +29,29 @@ model User {
   student        Student?
   refreshTokens  RefreshToken[]
   passwordResets PasswordResetToken[]
+  notices        Notice[]
+}
+
+enum NoticeAudience {
+  all
+  admin
+  teacher
+  student
+  parent
+}
+
+model Notice {
+  id          String         @id @default(cuid())
+  title       String
+  description String
+  audience    NoticeAudience @default(all)
+  postedById  String
+  postedBy    User           @relation(fields: [postedById], references: [id], onDelete: Cascade)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([audience, createdAt])
+  @@index([postedById])
 }
 
 model RefreshToken {
@@ -61,8 +84,8 @@ model Student {
   userId        String    @unique
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   rollNumber    String    @unique
-  grade         String
-  section       String?
+  sectionId     String?
+  section       Section?  @relation(fields: [sectionId], references: [id], onDelete: SetNull)
   gender        String?
   guardianName  String
   guardianPhone String
@@ -73,18 +96,57 @@ model Student {
 }
 
 model Teacher {
-  id            String    @id @default(cuid())
-  userId        String    @unique
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  employeeId    String    @unique
-  subject       String
-  gender        String?
-  phone         String?
-  qualification String?
-  dateOfBirth   DateTime?
-  address       String?
-  joinedAt      DateTime?
-  deletedAt     DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id             String         @id @default(cuid())
+  userId         String         @unique
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employeeId     String         @unique
+  subject        String
+  gender         String?
+  phone          String?
+  qualification  String?
+  classSections  Section[]      @relation("ClassTeacher")
+  subjectAssigns ClassSubject[]
+  dateOfBirth    DateTime?
+  address        String?
+  joinedAt       DateTime?
+  deletedAt      DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+}
+
+model SchoolClass {
+  id        String         @id @default(cuid())
+  name      String         @unique
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  sections  Section[]
+  subjects  ClassSubject[]
+}
+
+model Section {
+  id             String      @id @default(cuid())
+  name           String
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  classId        String
+  schoolClass    SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  classTeacherId String?
+
+  teacher  Teacher?  @relation("ClassTeacher", fields: [classTeacherId], references: [id], onDelete: SetNull)
+  students Student[]
+
+  @@unique([classId, name])
+  @@index([classTeacherId])
+}
+
+model ClassSubject {
+  id          String      @id @default(cuid())
+  classId     String
+  schoolClass SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subject     String
+  teacherId   String?
+  teacher     Teacher?    @relation(fields: [teacherId], references: [id], onDelete: SetNull)
+
+  @@unique([classId, subject])
+  @@index([teacherId])
 }

@@ -33,38 +33,6 @@ export function formatNoticeDate(iso: string): string {
   })
 }
 
-/** Seed notices covering a school-wide announcement and role-targeted ones. */
-export const INITIAL_NOTICES: Notice[] = [
-  {
-    id: 'notice-1',
-    title: 'Annual Sports Day',
-    description:
-      'Annual Sports Day will be held on the school grounds. Please ensure students wear house colours and bring a water bottle.',
-    audience: 'all',
-    postedBy: 'Admin Office',
-    postedByRole: 'admin',
-    createdAt: '2026-09-18T09:00:00',
-  },
-  {
-    id: 'notice-2',
-    title: 'Parent-Teacher Meeting',
-    description: 'PTM slots are now open for booking. Please check the portal for available time slots.',
-    audience: 'parent',
-    postedBy: 'Grace Kim',
-    postedByRole: 'teacher',
-    createdAt: '2026-09-20T14:30:00',
-  },
-  {
-    id: 'notice-3',
-    title: 'Winter Uniform',
-    description: 'Winter uniforms are mandatory starting next Monday. Please check the updated dress code circular.',
-    audience: 'all',
-    postedBy: 'Admin Office',
-    postedByRole: 'admin',
-    createdAt: '2026-09-21T11:15:00',
-  },
-]
-
 /** Notices a given role should see: school-wide, plus anything targeted at that role. */
 export function visibleToRole(notices: Notice[], role: RoleId): Notice[] {
   return notices.filter((notice) => notice.audience === 'all' || notice.audience === role)

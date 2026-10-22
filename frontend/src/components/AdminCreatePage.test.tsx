@@ -196,7 +196,6 @@ describe('AdminCreatePage — T-006 email/name validation regression (pre-migrat
     fireEvent.change(screen.getByLabelText(/full name/i), { target: { value: 'Sam Student' } })
     fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'sam@example.com' } })
     fireEvent.change(screen.getByLabelText(/temporary password/i), { target: { value: 'Str0ng!pass' } })
-    fireEvent.change(screen.getByLabelText(/class \/ grade/i), { target: { value: 'Grade 3' } })
     fireEvent.change(screen.getByLabelText(/roll number/i), { target: { value: 'R-7' } })
     fireEvent.change(screen.getByLabelText(/guardian name/i), { target: { value: 'Gina Guardian' } })
     fireEvent.change(screen.getByLabelText(/guardian phone/i), { target: { value: '555-0100' } })
@@ -204,7 +203,7 @@ describe('AdminCreatePage — T-006 email/name validation regression (pre-migrat
 
     await waitFor(() => expect(screen.getByText('Student account created for Sam Student.')).toBeInTheDocument())
     expect(createStudent).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'Sam Student', rollNumber: 'R-7', grade: 'Grade 3', guardianName: 'Gina Guardian' }),
+      expect.objectContaining({ name: 'Sam Student', rollNumber: 'R-7', guardianName: 'Gina Guardian' }),
     )
   })
 
@@ -248,12 +247,11 @@ describe('AdminCreatePage — T-006 email/name validation regression (pre-migrat
     expect(screen.getByRole('alert')).toHaveTextContent('Please enter the teacher’s full name.')
   })
 
-  it('own addition: student tab preserves name-check-before-grade-check order (same pattern as teacher/parent, no email field on this tab)', () => {
+  it('own addition: student tab preserves name-check-first order (same pattern as teacher/parent, no email field on this tab)', () => {
     const { container } = renderPage({ initialTab: 'student' })
 
     // Student tab has no email field/validator at all — this just confirms
     // the shared "name check runs first" order survives the migration here too.
-    fireEvent.change(screen.getByLabelText(/class \/ grade/i), { target: { value: 'Grade 1' } })
     submitActiveForm(container)
 
     expect(screen.getByRole('alert')).toHaveTextContent('Please enter the student’s full name.')

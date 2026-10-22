@@ -3,7 +3,6 @@ import { useState, type FormEvent } from 'react'
 import {
   audienceLabel,
   formatNoticeDate,
-  INITIAL_NOTICES,
   makeNoticeId,
   visibleToRole,
   type Notice,
@@ -26,7 +25,7 @@ interface NoticeBoardPageProps {
  * persisted yet.
  */
 export function NoticeBoardPage({ user, onBack, onSignOut }: NoticeBoardPageProps) {
-  const [notices, setNotices] = useState<Notice[]>(INITIAL_NOTICES)
+  const [notices, setNotices] = useState<Notice[]>([])
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [audience, setAudience] = useState<NoticeAudience>('all')

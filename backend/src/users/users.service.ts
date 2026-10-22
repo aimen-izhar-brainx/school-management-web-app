@@ -7,14 +7,23 @@ export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   findByEmail(email: string): Promise<User | null> {
-    return this.prisma.user.findUnique({ where: { email: email.trim().toLowerCase() } });
+    return this.prisma.user.findUnique({
+      where: { email: email.trim().toLowerCase() },
+    });
   }
 
   findById(id: string): Promise<User | null> {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
-  create(data: { name: string; email: string; passwordHash: string; role: Role }): Promise<User> {
-    return this.prisma.user.create({ data: { ...data, email: data.email.trim().toLowerCase() } });
+  create(data: {
+    name: string;
+    email: string;
+    passwordHash: string;
+    role: Role;
+  }): Promise<User> {
+    return this.prisma.user.create({
+      data: { ...data, email: data.email.trim().toLowerCase() },
+    });
   }
 }

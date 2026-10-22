@@ -49,7 +49,7 @@ const toStudentRow = (s: Student): Row => ({
   id: s.id,
   name: s.user.name,
   email: s.user.email,
-  detail: s.section ? `${s.grade} – ${s.section}` : s.grade,
+  detail: s.section ? `${s.section.schoolClass.name} – ${s.section.name}` : '—',
   extra: `Roll ${s.rollNumber}`,
 })
 

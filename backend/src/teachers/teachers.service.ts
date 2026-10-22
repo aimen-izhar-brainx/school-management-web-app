@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import bcrypt from 'bcrypt';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -8,9 +13,16 @@ import { CreateTeacherDto } from './dto/create-teacher.dto.js';
 import { UpdateTeacherDto } from './dto/update-teacher.dto.js';
 
 const teacherSelect = {
-  id: true, employeeId: true, subject: true, gender: true, phone: true,
-  dateOfBirth: true, address: true,
-  qualification: true, joinedAt: true, createdAt: true,
+  id: true,
+  employeeId: true,
+  subject: true,
+  gender: true,
+  phone: true,
+  dateOfBirth: true,
+  address: true,
+  qualification: true,
+  joinedAt: true,
+  createdAt: true,
   user: { select: { id: true, name: true, email: true } },
 } satisfies Prisma.TeacherSelect;
 
@@ -35,7 +47,9 @@ export class TeachersService {
 
   async create(dto: CreateTeacherDto) {
     if (!meetsPasswordRules(dto.password)) {
-      throw new BadRequestException('Password does not meet the strength requirements.');
+      throw new BadRequestException(
+        'Password does not meet the strength requirements.',
+      );
     }
     const email = dto.email.trim().toLowerCase();
     const passwordHash = await bcrypt.hash(dto.password, 12);
@@ -51,7 +65,9 @@ export class TeachersService {
             subject: dto.subject,
             gender: dto.gender,
             phone: dto.phone,
-            dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
+            dateOfBirth: dto.dateOfBirth
+              ? new Date(dto.dateOfBirth)
+              : undefined,
             address: dto.address,
             qualification: dto.qualification,
             joinedAt: dto.joinedAt ? new Date(dto.joinedAt) : undefined,
@@ -92,7 +108,9 @@ export class TeachersService {
             gender: dto.gender,
             phone: dto.phone,
             qualification: dto.qualification,
-            dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
+            dateOfBirth: dto.dateOfBirth
+              ? new Date(dto.dateOfBirth)
+              : undefined,
             address: dto.address,
             joinedAt: dto.joinedAt ? new Date(dto.joinedAt) : undefined,
           },
@@ -112,7 +130,10 @@ export class TeachersService {
 
   // Concurrent requests can pass the pre-checks and still hit the unique index.
   private toConflict(e: unknown) {
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+    if (
+      e instanceof Prisma.PrismaClientKnownRequestError &&
+      e.code === 'P2002'
+    ) {
       return new ConflictException('Email or employee ID already exists');
     }
     return e;

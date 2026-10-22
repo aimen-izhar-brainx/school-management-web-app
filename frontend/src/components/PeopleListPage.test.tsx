@@ -24,8 +24,7 @@ const teacher = {
 const student = {
   id: 's1',
   rollNumber: 'R-1',
-  grade: 'Grade 2',
-  section: 'B',
+  section: { id: 'sec-b', name: 'B', schoolClass: { id: 'c2', name: 'Grade 2' } },
   user: { id: 'u2', name: 'Sam Student', email: 'sam@example.com' },
 }
 
