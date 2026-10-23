@@ -1,15 +1,14 @@
 import { Megaphone, Trash2 } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import {
   audienceLabel,
   formatNoticeDate,
-  makeNoticeId,
-  visibleToRole,
   type Notice,
   type NoticeAudience,
 } from '../data/notices'
 import { roles } from '../data/roles'
 import type { AuthUser } from '../lib/auth'
+import * as noticesApi from '../lib/notices'
 import { DashboardShell } from './DashboardShell'
 
 interface NoticeBoardPageProps {
@@ -21,8 +20,7 @@ interface NoticeBoardPageProps {
 /**
  * Notice board for the whole school. Admin & teachers can post; every role can read.
  * Admin/teacher see every notice (they need full visibility to manage the board); a student or
- * parent only sees notices targeted at "all" or at their own role. UI only — nothing is
- * persisted yet.
+ * parent only sees notices targeted at "all" or at their own role — the /notices API enforces that.
  */
 export function NoticeBoardPage({ user, onBack, onSignOut }: NoticeBoardPageProps) {
   const [notices, setNotices] = useState<Notice[]>([])
@@ -30,17 +28,36 @@ export function NoticeBoardPage({ user, onBack, onSignOut }: NoticeBoardPageProp
   const [description, setDescription] = useState('')
   const [audience, setAudience] = useState<NoticeAudience>('all')
   const [formError, setFormError] = useState<string | null>(null)
+  const [pageError, setPageError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [posting, setPosting] = useState(false)
 
   const canPost = user.role === 'admin' || user.role === 'teacher'
 
-  const visibleNotices =
-    user.role === 'student' || user.role === 'parent' ? visibleToRole(notices, user.role) : notices
+  useEffect(() => {
+    let active = true
+    noticesApi
+      .listNotices(1)
+      .then((result) => {
+        if (!active) return
+        setNotices(result.items)
+        setTotal(result.total)
+      })
+      .catch((error: unknown) => {
+        if (active) setPageError(error instanceof Error ? error.message : 'Could not load notices.')
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
 
-  const sortedNotices = [...visibleNotices].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  )
-
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setFormError(null)
 
@@ -51,26 +68,56 @@ export function NoticeBoardPage({ user, onBack, onSignOut }: NoticeBoardPageProp
       return
     }
 
-    const created: Notice = {
-      id: makeNoticeId(),
-      title: trimmedTitle,
-      description: trimmedDescription,
-      audience,
-      postedBy: user.name,
-      postedByRole: user.role === 'admin' ? 'admin' : 'teacher',
-      createdAt: new Date().toISOString(),
+    setPosting(true)
+    try {
+      const created = await noticesApi.createNotice({
+        title: trimmedTitle,
+        description: trimmedDescription,
+        audience,
+      })
+      setNotices((prev) => [created, ...prev])
+      setTotal((prev) => prev + 1)
+      setTitle('')
+      setDescription('')
+      setAudience('all')
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Could not post the notice.')
+    } finally {
+      setPosting(false)
     }
-    setNotices((prev) => [created, ...prev])
-    setTitle('')
-    setDescription('')
-    setAudience('all')
   }
 
-  const handleDelete = (id: string) => {
-    setNotices((prev) => prev.filter((notice) => notice.id !== id))
+  const handleDelete = async (id: string) => {
+    setPageError(null)
+    try {
+      await noticesApi.deleteNotice(id)
+      setNotices((prev) => prev.filter((notice) => notice.id !== id))
+      setTotal((prev) => prev - 1)
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Could not delete the notice.')
+    }
   }
 
-  const canDelete = (notice: Notice) => user.role === 'admin' || notice.postedBy === user.name
+  const handleLoadMore = async () => {
+    setPageError(null)
+    setLoadingMore(true)
+    try {
+      const result = await noticesApi.listNotices(page + 1)
+      // Notices posted or deleted since the first load shift the pages, so skip repeats.
+      setNotices((prev) => {
+        const seen = new Set(prev.map((notice) => notice.id))
+        return [...prev, ...result.items.filter((notice) => !seen.has(notice.id))]
+      })
+      setTotal(result.total)
+      setPage((prev) => prev + 1)
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Could not load more notices.')
+    } finally {
+      setLoadingMore(false)
+    }
+  }
+
+  const canDelete = (notice: Notice) => user.role === 'admin' || notice.postedBy.id === user.id
 
   return (
     <DashboardShell onBack={onBack} onSignOut={onSignOut} mainClassName="mx-auto max-w-3xl px-6 py-12">
@@ -142,16 +189,23 @@ export function NoticeBoardPage({ user, onBack, onSignOut }: NoticeBoardPageProp
 
           <button
             type="submit"
-            className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
+            disabled={posting}
+            className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600 disabled:opacity-60"
           >
             <Megaphone className="size-4" />
-            Post notice
+            {posting ? 'Posting…' : 'Post notice'}
           </button>
         </form>
       )}
 
+      {pageError && (
+        <p role="alert" className="mt-6 text-xs text-red-600">
+          {pageError}
+        </p>
+      )}
+
       <div className="mt-8 space-y-3">
-        {sortedNotices.map((notice) => (
+        {notices.map((notice) => (
           <div key={notice.id} className="rounded-xl border border-slate-200 bg-white p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -180,13 +234,24 @@ export function NoticeBoardPage({ user, onBack, onSignOut }: NoticeBoardPageProp
             <p className="mt-2 text-sm text-slate-600">{notice.description}</p>
 
             <p className="mt-3 text-xs text-slate-400">
-              {notice.postedBy} &middot; {notice.postedByRole === 'admin' ? 'Admin' : 'Teacher'} &middot;{' '}
+              {notice.postedBy.name} &middot; {notice.postedBy.role === 'admin' ? 'Admin' : 'Teacher'} &middot;{' '}
               {formatNoticeDate(notice.createdAt)}
             </p>
           </div>
         ))}
 
-        {sortedNotices.length === 0 && (
+        {notices.length < total && (
+          <button
+            type="button"
+            onClick={handleLoadMore}
+            disabled={loadingMore}
+            className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60"
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </button>
+        )}
+
+        {!loading && notices.length === 0 && (
           <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
             No notices yet.
           </div>

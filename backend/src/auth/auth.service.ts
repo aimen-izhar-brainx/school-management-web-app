@@ -9,7 +9,7 @@ import { JwtService } from '@nestjs/jwt';
 import bcrypt from 'bcrypt';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import type { Prisma } from '../generated/prisma/client.js';
+import type { Prisma, Role } from '../generated/prisma/client.js';
 import { UsersService } from '../users/users.service.js';
 import type { JwtPayload } from './jwt.strategy.js';
 import {
@@ -180,7 +180,7 @@ export class AuthService {
     return record;
   }
 
-  private signAccessToken(userId: string, email: string, role: string): string {
+  private signAccessToken(userId: string, email: string, role: Role): string {
     const payload: JwtPayload = { sub: userId, email, role };
     return this.jwt.sign(payload, {
       secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),

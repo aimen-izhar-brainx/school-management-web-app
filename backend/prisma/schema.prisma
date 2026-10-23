@@ -46,7 +46,7 @@ model Notice {
   description String
   audience    NoticeAudience @default(all)
   postedById  String
-  postedBy    User           @relation(fields: [postedById], references: [id], onDelete: Cascade)
+  postedBy    User           @relation(fields: [postedById], references: [id], onDelete: Restrict)
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 

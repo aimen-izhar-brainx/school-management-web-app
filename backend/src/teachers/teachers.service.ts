@@ -124,8 +124,19 @@ export class TeachersService {
 
   async remove(id: string) {
     const existing = await this.findOne(id);
-    // Teacher cascades from User, so deleting the user removes the profile too.
-    await this.prisma.user.delete({ where: { id: existing.user.id } });
+    try {
+      await this.prisma.user.delete({ where: { id: existing.user.id } });
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2003'
+      ) {
+        throw new ConflictException(
+          'Teacher has posted notices and cannot be deleted',
+        );
+      }
+      throw e;
+    }
   }
 
   // Concurrent requests can pass the pre-checks and still hit the unique index.

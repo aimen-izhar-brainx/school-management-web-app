@@ -41,7 +41,9 @@ No changes. Schema stays exactly as-is, since wiring real APIs/DB for the mock-d
 - **RefreshToken** — id, tokenHash, userId, longLived, expiresAt, revokedAt, createdAt
 - **PasswordResetToken** — id, tokenHash, userId, expiresAt, usedAt, createdAt
 
-Attendance, timetable, notices, and classes remain frontend-only mock data (`frontend/src/data/*.ts`) with no backing tables.
+- **Notice** — id, title, description, audience (all/admin/teacher/student/parent), postedById, createdAt, updatedAt
+
+Attendance and timetable remain frontend-only mock data (`frontend/src/data/*.ts`) with no backing tables. Classes and notices are backed by the API.
 
 ## Milestones
 

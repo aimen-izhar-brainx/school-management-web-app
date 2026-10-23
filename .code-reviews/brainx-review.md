@@ -1,87 +1,51 @@
 ---
-diff_hash: 896b50babaedb8930473f0b0e7949872ca6486f9f7a452e5bf32b7150e4c0dbb
-reviewed_at: 2026-10-22T12:00:00Z
+diff_hash: f234a2e57d7040ead77fb4357345d09f8efa234c5e949b416124d031a93d9d27
+reviewed_at: 2026-10-23T06:46:21Z
 ---
 
 ## Summary
 
-Stack: NestJS 12 + Prisma (backend) and React (frontend), both in one repo. This diff adds a Classes module: `SchoolClass`, `Section` and `ClassSubject` models, an admin-only `/classes` REST API, and a rewrite of `ClassesPage` to use it instead of local state. It also replaces `Student.section` (free text) with a `sectionId` relation. Separately, it adds a `Notice` model to `schema.prisma` and removes the seed notices from the frontend.
+Stack: NestJS + Prisma (backend) and React (frontend), both in one repo. This diff adds a Notice module: a migration for the `Notice` table and `NoticeAudience` enum, a `/notices` API (list, create, delete), a `@CurrentUser()` decorator, and a rewrite of `NoticeBoardPage` to use the API instead of local state. It also changes `Notice.postedBy` from `onDelete: Cascade` to `Restrict`.
 
-Cross-stack check: the frontend `lib/classes.ts` matches the backend routes and DTOs (`PATCH /classes/sections/:id`, `PUT /classes/:id/subjects`, and the teachers list capped at `limit=100`). Route order is safe, because `sections/:sectionId` has two segments and cannot be captured by `:id`.
+This resolves the earlier findings about the missing Notice migration and the local-only notice page. Cross-stack check: the frontend `lib/notices.ts` matches the backend routes, the `{ items }` response shape and the `postedBy: { id, name, role }` select. The audience filtering is enforced server-side for students and parents. Authorization is correct: create and delete are limited to admin and teacher, and non-admins can delete only their own notices.
 
 ## Findings
 
 ### Critical (0)
 
-### High (2)
-- **backend/prisma/schema.prisma:44-63** — The schema adds the `Notice` model and the `NoticeAudience` enum, but `20261021100240_add_classes_module/migration.sql` contains no `Notice` table or enum. *(correctness)*
-  - status: ignored
-  - dev_reasoning: I will run the migration later
-  - ai_reasoning: The schema and migration history are out of sync. The next `prisma migrate dev` will generate a surprise migration, and `migrate deploy` will leave the table missing. The generated client will also expose a `notice` delegate that fails at runtime. Either add the Notice migration, with its module, or remove the model from this change. Re-review: still present. The only new migration, `20261022000000_drop_student_grade`, drops `Student.grade` and adds no `Notice` table.
-- **backend/prisma/migrations/20261021100240_add_classes_module/migration.sql:7** — The migration runs `DROP COLUMN "section"` on `Student` with no backfill into the new `Section` relation. *(data-integrity)*
-  - status: ignored
-  - dev_reasoning: No real data exists for now so this will not cause any issue
-  - ai_reasoning: Every existing student's section value is permanently lost on deploy. The migration's own warning says so. If any real data exists, add a data step that creates `SchoolClass` and `Section` rows from the distinct `grade`/`section` pairs, and set `sectionId` before dropping the column. If the data is truly disposable, mark this finding skipped with that reason. Re-review: still present, and the new `drop_student_grade` migration drops `Student.grade` with no backfill either, so the same loss now applies to grade values.
+### High (1)
+- **backend/prisma/schema.prisma:49** — `Notice.postedBy` is now `onDelete: Restrict`, but `TeachersService.remove` (teachers.service.ts:128) deletes the `User` row directly and has no handling for the foreign-key violation. *(correctness)*
+  - status: fixed
+  - dev_reasoning: N/A
+  - ai_reasoning: Once a teacher or admin has posted a notice, deleting that teacher fails with a Prisma P2003 error, and the client sees a 500. Nothing in `src/` handles P2003. Either delete or reassign the user's notices before deleting the user, in a transaction, or catch P2003 and return a 409 with a clear message such as "Teacher has posted notices". The same applies to any other path that deletes a posting user.
 
-### Medium (6)
-- **backend/src/students/dto/create-student.dto.ts:23** — `section` is removed from student creation, and nothing replaces it with `sectionId`. *(correctness)*
+### Medium (2)
+- **frontend/src/lib/notices.ts:21** — The list is fetched once with `page=1&limit=100`, and the page has no pagination or "load more". *(correctness)*
   - status: fixed
   - dev_reasoning: N/A
-  - ai_reasoning: Re-review: `sectionId` is now an optional field on the create DTO and is inherited by the update DTO, and the service validates it through `findSection`. Original note: Students can no longer be placed in a section through any endpoint in this diff. The class roster UI will therefore always be empty. `Student.grade` also stays as a free string that is not tied to `SchoolClass`, so class membership has two sources of truth. Add an optional validated `sectionId` to the create and update flows, and decide how `grade` relates to the class.
-- **backend/src/classes/classes.service.ts:290** — `findAll` is unbounded and eagerly loads the full student roster of every section, with teachers for every class. The page then calls it again after every mutation. *(performance)*
+  - ai_reasoning: Once there are more than 100 visible notices, the older ones cannot be reached from the UI, and nothing indicates they are missing. The response already includes `total`, `page` and `limit`, but they are discarded. Add paging or a load-more control, or at least show a message when `total` exceeds the number of items loaded. Re-review: fixed. `listNotices(page)` now returns `{ items, total }`, and the page shows a "Load more" button while `notices.length < total`, de-duplicating repeats.
+- **backend/src/notices (whole module)** — No unit or e2e tests are included for the new service or controller. *(testing)*
   - status: ignored
-  - dev_reasoning: I will add pagination later
-  - ai_reasoning: The payload grows with the total number of students, and the frontend re-fetches all of it for each small edit, such as a teacher dropdown change. Return student counts in the list and load the roster per section on demand, or paginate the list.
-- **backend/src/classes/dto/create-class.dto.ts:15** — `CreateClassDto.name` uses `@MinLength(4)`, but `UpdateClassDto.name` uses `@MinLength(1)`. *(consistency)*
-  - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: Re-review: both DTOs now use `@MinLength(4)`, so the mismatch is gone. Short names such as "KG" are still rejected by both, which is a product decision for the developer. Original note: The rules disagree, so rename accepts names that create rejects. Create also rejects legitimate short names such as "KG" or "LKG". Pick one rule, and derive the update DTO with `PartialType(CreateClassDto)` as the NestJS guidance suggests.
-- **backend/src/classes/classes.service.ts:374-380** — `removeSubject` turns every error from `delete(...)` into `NotFoundException('Subject assignment not found.')`. *(error-handling)*
-  - status: ignored
-  - dev_reasoning:If we do not add prisma expection it will not cause any issue
-  - ai_reasoning: Connection failures and other Prisma errors are reported to the client as a 404 and hidden from the logs. Catch only `PrismaClientKnownRequestError` with code `P2025`, and rethrow anything else.
-- **frontend/src/components/NoticeBoardPage.tsx:28** — The seed notices were removed, but the page is still local-state only and now starts empty on every load. *(correctness)*
-  - status: ignored
-  - dev_reasoning: I will replace it real data soon
-  - ai_reasoning: This change has nothing to do with classes. Notices vanish on reload, and the page header comment still says "UI only". Either wire it to a Notice API, which pairs with the High finding on the Notice schema, or keep the seed data until that exists.
-- **backend/src/classes (whole module)** — No unit or e2e tests are included for the new service or controller. *(testing)*
-  - status: ignored
-  - dev_reasoning: tests are not part of this scope
-  - ai_reasoning: The module has non-trivial behaviour that is easy to break: teacher existence checks, P2002 to 409 mapping, upsert semantics for null versus undefined, and admin-only guards. CLAUDE.md defines `npm run test` as the project test command, so these paths should be covered.
+  - dev_reasoning: Unit testing are not in this scope
+  - ai_reasoning: CLAUDE.md defines `npm run test` as the backend test command. The module has behaviour that is easy to break: role-based audience filtering for students and parents, the admin-or-owner rule on delete (403 versus 404), and the admin/teacher-only guards on create and delete.
 
-### Low (3)
-- **backend/src/classes/dto/create-class.dto.ts:1** — The new classes files do not match the existing code style. *(style)*
+### Low (1)
+- **backend/src/notices/notice.controller.ts:24** — `findAll`, `create` and `remove` have no explicit return types, and `user.role as Role` casts the JWT string to the Prisma enum. *(maintainability)*
   - status: fixed
   - dev_reasoning: N/A
-  - ai_reasoning: Re-review (3): fixed. `update-class.dto.ts` now uses single quotes, 2-space indentation, semicolons and a trailing newline, matching the sibling DTOs. Earlier note (2): still present. The working-tree `update-class.dto.ts` still has double quotes, 4-space indentation, a blank line after the class opening, `name?:string` with no semicolon, and no trailing newline. Re-review: regressed. `update-class.dto.ts` was rewritten with double quotes, 4-space indentation, a blank line after the class opening, `name?:string` with no semicolon, and no trailing newline, which is exactly this finding. Reformat it to match the sibling DTOs, for example by running the formatter. Original note: The DTOs use double quotes, 4-space indentation, and missing semicolons or newlines (`update-class.dto.ts`). The controller, module and service have stray double blank lines. Run the project formatter or lint so they match the sibling modules.
-- **backend/prisma/schema.prisma:149** — The comment `// or a Subject table` is a leftover note on `ClassSubject.subject`. *(maintainability)*
-  - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: Re-review: the comment is removed. Original note: Remove the comment, or turn it into a tracked TODO. Storing the subject as a free string on `ClassSubject` also allows spelling variants, so a `Subject` table is the longer-term answer.
-- **frontend/src/lib/classes.ts:968** — `listTeacherOptions` fetches only the first 100 teachers. *(correctness)*
-  - status: ignored
-  - dev_reasoning: I will add pagination later
-  - ai_reasoning: The 100 cap is intentional and documented in the comment, because the backend caps `limit` at 100. A school with more than 100 teachers will silently get an incomplete assignment dropdown. Paginate the fetch, or add a dedicated lightweight teacher-options endpoint.
+  - ai_reasoning: This matches the style of the existing controllers, so the impact is small. The cast hides a mismatch if `JwtPayload.role` is ever widened. Typing `JwtPayload.role` as `Role` in `jwt.strategy.ts` would remove the casts in the controller and the service signature.
 
 ## Reviewed files
-- .code-reviews/brainx-review.md (deletion of the previous review record, not reviewed)
-- backend/prisma/migrations/20261021100240_add_classes_module/migration.sql
+- .code-reviews/brainx-review.md (deleted, replaced by this review)
+- backend/prisma/migrations/20261022083959_add_notice_module/migration.sql
 - backend/prisma/schema.prisma
 - backend/src/app.module.ts
-- backend/src/classes/classes.controller.ts
-- backend/src/classes/classes.module.ts
-- backend/src/classes/classes.service.ts
-- backend/src/classes/dto/create-class.dto.ts
-- backend/src/classes/dto/update-class.dto.ts
-- backend/src/students/dto/create-student.dto.ts
-- backend/src/students/students.service.ts
-- backend/src/students/students.service.spec.ts
-- backend/prisma/migrations/20261022000000_drop_student_grade/migration.sql
-- frontend/src/components/AdminCreatePage.tsx (and .test.tsx)
-- frontend/src/components/PeopleListPage.tsx (and .test.tsx)
-- frontend/src/lib/people.ts
-- frontend/src/components/ClassesPage.tsx
+- backend/src/auth/current-user.decorator.ts
+- backend/src/notices/dto/create-notice.dto.ts
+- backend/src/notices/notice.controller.ts
+- backend/src/notices/notice.module.ts
+- backend/src/notices/notice.service.ts
+- docs/plan.md
 - frontend/src/components/NoticeBoardPage.tsx
 - frontend/src/data/notices.ts
-- frontend/src/lib/classes.ts
-- frontend/src/lib/http.ts
+- frontend/src/lib/notices.ts
