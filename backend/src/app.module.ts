@@ -4,6 +4,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
+import { AttendanceModule } from './attendance/attendance.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { ClassesModule } from './classes/classes.module.js';
 import { MailModule } from './mail/mail.module.js';
@@ -25,6 +26,7 @@ import { TeachersModule } from './teachers/teachers.module.js';
     StudentsModule,
     ClassesModule,
     NoticeModule,
+    AttendanceModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

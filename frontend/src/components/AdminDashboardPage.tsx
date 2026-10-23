@@ -8,15 +8,12 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react'
-import {
-  getTodayKey,
-  INITIAL_ATTENDANCE_RECORDS,
-  schoolAttendanceSummary,
-  totalStudentCount,
-} from '../data/attendance'
+import { useEffect, useState } from 'react'
+import { getTodayKey } from '../data/attendance'
 import { getRole } from '../data/roles'
 import { SECTION_OPTIONS, TEACHERS } from '../data/timetable'
 import type { AuthUser } from '../lib/auth'
+import { getDailySummary, type DailySectionSummary } from '../lib/attendance'
 import { DashboardShell } from './DashboardShell'
 import type { DirectoryTab } from '../lib/people'
 
@@ -62,11 +59,31 @@ export function AdminDashboardPage({
   const role = getRole('admin')
   const RoleIcon = role.icon
 
-  const totalStudents = totalStudentCount()
   const totalTeachers = TEACHERS.length
   const totalSections = SECTION_OPTIONS.length
   const totalClasses = new Set(SECTION_OPTIONS.map((section) => section.className)).size
-  const attendance = schoolAttendanceSummary(INITIAL_ATTENDANCE_RECORDS, getTodayKey())
+  const [todayRows, setTodayRows] = useState<DailySectionSummary[]>([])
+
+  useEffect(() => {
+    let active = true
+    getDailySummary(getTodayKey())
+      .then((rows) => {
+        if (active) setTodayRows(rows)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const totalStudents = todayRows.reduce((sum, row) => sum + row.enrolled, 0)
+  const marked = todayRows.filter((row) => row.marked)
+  const attendance = {
+    present: marked.reduce((sum, row) => sum + row.present, 0),
+    absent: marked.reduce((sum, row) => sum + row.absent, 0),
+    markedSections: marked.length,
+    totalSections: todayRows.length,
+  }
 
   const quickNavItems: QuickNavItem[] = [
     {

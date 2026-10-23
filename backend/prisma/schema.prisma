@@ -30,6 +30,9 @@ model User {
   refreshTokens  RefreshToken[]
   passwordResets PasswordResetToken[]
   notices        Notice[]
+
+  attendanceSubmitted Attendance[]         @relation("AttendanceSubmittedBy")
+  attendanceChanges   AttendanceAuditLog[] @relation("AttendanceChangedBy")
 }
 
 enum NoticeAudience {
@@ -80,19 +83,20 @@ model PasswordResetToken {
 }
 
 model Student {
-  id            String    @id @default(cuid())
-  userId        String    @unique
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  rollNumber    String    @unique
+  id            String             @id @default(cuid())
+  userId        String             @unique
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rollNumber    String             @unique
   sectionId     String?
-  section       Section?  @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  section       Section?           @relation(fields: [sectionId], references: [id], onDelete: SetNull)
   gender        String?
   guardianName  String
   guardianPhone String
   dateOfBirth   DateTime?
   address       String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  attendance    AttendanceRecord[]
 }
 
 model Teacher {
@@ -135,6 +139,9 @@ model Section {
   teacher  Teacher?  @relation("ClassTeacher", fields: [classTeacherId], references: [id], onDelete: SetNull)
   students Student[]
 
+  attendance        Attendance[]
+  attendanceRecords AttendanceRecord[]
+
   @@unique([classId, name])
   @@index([classTeacherId])
 }
@@ -149,4 +156,59 @@ model ClassSubject {
 
   @@unique([classId, subject])
   @@index([teacherId])
+}
+
+enum AttendanceStatus {
+  present
+  absent
+  leave
+}
+
+model Attendance {
+  id            String             @id @default(cuid())
+  sectionId     String
+  section       Section            @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  date          DateTime           @db.Date
+  submittedById String
+  submittedBy   User               @relation("AttendanceSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
+  submittedAt   DateTime           @default(now())
+  records       AttendanceRecord[]
+
+  @@unique([sectionId, date])
+  @@index([date])
+}
+
+model AttendanceRecord {
+  id        String               @id @default(cuid())
+  sessionId String
+  session   Attendance           @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  studentId String
+  student   Student              @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  sectionId String
+  section   Section              @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  date      DateTime             @db.Date
+  status    AttendanceStatus
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+  auditLogs AttendanceAuditLog[]
+
+  @@unique([studentId, date])
+  @@index([sectionId, date])
+  @@index([studentId, date])
+  @@index([sessionId])
+}
+
+model AttendanceAuditLog {
+  id          String           @id @default(cuid())
+  recordId    String
+  record      AttendanceRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  oldStatus   AttendanceStatus
+  newStatus   AttendanceStatus
+  reason      String
+  changedById String
+  changedBy   User             @relation("AttendanceChangedBy", fields: [changedById], references: [id], onDelete: Restrict)
+  createdAt   DateTime         @default(now())
+
+  @@index([recordId])
+  @@index([changedById])
 }

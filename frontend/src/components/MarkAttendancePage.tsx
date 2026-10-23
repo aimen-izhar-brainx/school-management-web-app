@@ -1,21 +1,19 @@
 import { CircleCheck, Lock } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   ATTENDANCE_STATUSES,
-  INITIAL_ATTENDANCE_RECORDS,
-  attendanceKey,
   formatDateLabel,
   formatDateTimeLabel,
   getTodayKey,
-  rosterFor,
   statusInfo,
-  summarizeEntries,
-  type AttendanceRecord,
   type AttendanceStatus,
 } from '../data/attendance'
-import { SECTION_OPTIONS, sectionLabel } from '../data/timetable'
 import type { AuthUser } from '../lib/auth'
+import * as attendanceApi from '../lib/attendance'
+import { sectionLabel, type AttendanceSession, type AttendanceStudent } from '../lib/attendance'
 import { DashboardShell } from './DashboardShell'
+import { useAttendanceSections } from './useAttendanceSections'
+import { useSectionRoster } from './useSectionRoster'
 
 interface MarkAttendancePageProps {
   user: AuthUser
@@ -23,52 +21,82 @@ interface MarkAttendancePageProps {
   onSignOut: () => void
 }
 
-function defaultDraft(sectionId: string): Record<string, AttendanceStatus> {
+function defaultDraft(roster: AttendanceStudent[]): Record<string, AttendanceStatus> {
   const draft: Record<string, AttendanceStatus> = {}
-  for (const student of rosterFor(sectionId)) draft[student.id] = 'present'
+  for (const student of roster) draft[student.id] = 'present'
   return draft
 }
 
-/** Teacher-only screen for marking daily attendance. Submitting locks the day — only an admin can edit it afterwards. */
-export function MarkAttendancePage({ user, onBack, onSignOut }: MarkAttendancePageProps) {
-  const [records, setRecords] = useState<Record<string, AttendanceRecord>>(INITIAL_ATTENDANCE_RECORDS)
-  const [sectionId, setSectionId] = useState(SECTION_OPTIONS[0]?.id ?? '')
-  const [date, setDate] = useState(getTodayKey())
-  const [draft, setDraft] = useState<Record<string, AttendanceStatus>>(() => defaultDraft(sectionId))
+function summarize(session: AttendanceSession): Record<AttendanceStatus, number> {
+  const summary: Record<AttendanceStatus, number> = { present: 0, absent: 0, leave: 0 }
+  for (const record of session.records) summary[record.status] += 1
+  return summary
+}
 
-  const roster = rosterFor(sectionId)
-  const selectedSection = SECTION_OPTIONS.find((section) => section.id === sectionId) ?? SECTION_OPTIONS[0]
-  const key = attendanceKey(sectionId, date)
-  const existing = records[key] ?? null
+/** Teacher-only screen for marking daily attendance. Submitting locks the day — only an admin can edit it afterwards. */
+export function MarkAttendancePage({ onBack, onSignOut }: MarkAttendancePageProps) {
+  const { sections, loading: sectionsLoading, error: sectionsError } = useAttendanceSections()
+  const [chosenSectionId, setChosenSectionId] = useState('')
+  const [date, setDate] = useState(getTodayKey())
+  const [draft, setDraft] = useState<Record<string, AttendanceStatus>>({})
+  const [existing, setExisting] = useState<AttendanceSession | null>(null)
+  const [dayLoading, setDayLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const selectedSection = sections.find((section) => section.id === chosenSectionId) ?? sections[0] ?? null
+  const sectionId = selectedSection?.id ?? ''
+  const { roster, loading: rosterLoading, error: rosterError } = useSectionRoster(sectionId)
   const today = getTodayKey()
 
-  // Reset the in-progress draft whenever the class or date changes — an unsubmitted draft isn't kept around.
-  const [draftKey, setDraftKey] = useState(key)
-  if (draftKey !== key) {
-    setDraftKey(key)
-    setDraft(defaultDraft(sectionId))
-  }
+  // Reset the in-progress draft and look up any submitted record whenever the class or date changes —
+  // an unsubmitted draft isn't kept around.
+  useEffect(() => {
+    if (!sectionId) return
+    let active = true
+    setDayLoading(true)
+    setError(null)
+    setExisting(null)
+    attendanceApi
+      .getSectionDay(sectionId, date)
+      .then((session) => {
+        if (active) setExisting(session)
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : 'Could not load attendance.')
+      })
+      .finally(() => {
+        if (active) setDayLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [sectionId, date])
+
+  useEffect(() => {
+    setDraft(defaultDraft(roster))
+  }, [roster, date])
 
   const setStudentStatus = (studentId: string, status: AttendanceStatus) => {
     setDraft((prev) => ({ ...prev, [studentId]: status }))
   }
 
-  const markAllPresent = () => setDraft(defaultDraft(sectionId))
+  const markAllPresent = () => setDraft(defaultDraft(roster))
 
-  const handleSubmit = () => {
-    const record: AttendanceRecord = {
-      sectionId,
-      date,
-      entries: draft,
-      submittedBy: user.name,
-      submittedAt: new Date().toISOString(),
-      locked: true,
-      editLog: [],
+  const handleSubmit = async () => {
+    setSubmitting(true)
+    setError(null)
+    try {
+      setExisting(await attendanceApi.submitAttendance(sectionId, date, draft))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not submit attendance.')
+    } finally {
+      setSubmitting(false)
     }
-    setRecords((prev) => ({ ...prev, [key]: record }))
   }
 
-  const summary = existing ? summarizeEntries(existing.entries) : null
+  const summary = existing ? summarize(existing) : null
+  const statusById = new Map(existing?.records.map((record) => [record.studentId, record.status]))
 
   return (
     <DashboardShell onBack={onBack} onSignOut={onSignOut} mainClassName="mx-auto max-w-3xl px-6 py-12">
@@ -83,10 +111,10 @@ export function MarkAttendancePage({ user, onBack, onSignOut }: MarkAttendancePa
           <select
             id="attendance-section"
             value={sectionId}
-            onChange={(event) => setSectionId(event.target.value)}
+            onChange={(event) => setChosenSectionId(event.target.value)}
             className="mt-1.5 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
           >
-            {SECTION_OPTIONS.map((section) => (
+            {sections.map((section) => (
               <option key={section.id} value={section.id}>
                 {sectionLabel(section)}
               </option>
@@ -109,13 +137,21 @@ export function MarkAttendancePage({ user, onBack, onSignOut }: MarkAttendancePa
         </div>
       </div>
 
-      {roster.length === 0 && (
+      {(sectionsError || rosterError || error) && (
+        <p role="alert" className="mt-6 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {sectionsError ?? rosterError ?? error}
+        </p>
+      )}
+
+      {(sectionsLoading || rosterLoading || dayLoading) && <p className="mt-8 text-sm text-slate-500">Loading&hellip;</p>}
+
+      {!sectionsLoading && !rosterLoading && !dayLoading && roster.length === 0 && (
         <div className="mt-8 rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
           No students are enrolled in this section yet.
         </div>
       )}
 
-      {roster.length > 0 && existing && (
+      {!dayLoading && roster.length > 0 && existing && (
         <div className="mt-8">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4">
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
@@ -123,7 +159,7 @@ export function MarkAttendancePage({ user, onBack, onSignOut }: MarkAttendancePa
               Submitted &amp; locked
             </div>
             <p className="text-xs text-slate-500">
-              Marked by {existing.submittedBy} &middot; {formatDateTimeLabel(existing.submittedAt)}
+              Marked by {existing.submittedBy.name} &middot; {formatDateTimeLabel(existing.submittedAt)}
             </p>
           </div>
 
@@ -141,7 +177,7 @@ export function MarkAttendancePage({ user, onBack, onSignOut }: MarkAttendancePa
 
           <ul className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
             {roster.map((student) => {
-              const status = existing.entries[student.id]
+              const status = statusById.get(student.id)
               const info = status ? statusInfo(status) : null
               return (
                 <li key={student.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
@@ -165,7 +201,7 @@ export function MarkAttendancePage({ user, onBack, onSignOut }: MarkAttendancePa
         </div>
       )}
 
-      {roster.length > 0 && !existing && (
+      {!dayLoading && roster.length > 0 && !existing && (
         <div className="mt-8">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-700">
@@ -211,10 +247,11 @@ export function MarkAttendancePage({ user, onBack, onSignOut }: MarkAttendancePa
           <button
             type="button"
             onClick={handleSubmit}
-            className="mt-4 flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
+            disabled={submitting}
+            className="mt-4 flex items-center gap-1.5 rounded-lg bg-violet-600 disabled:opacity-60 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600"
           >
             <CircleCheck className="size-4" />
-            Submit attendance
+            {submitting ? 'Submitting…' : 'Submit attendance'}
           </button>
         </div>
       )}
