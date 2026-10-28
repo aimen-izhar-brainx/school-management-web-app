@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { AdminCreatePage } from './components/AdminCreatePage'
 import { AdminDashboardPage } from './components/AdminDashboardPage'
 import { AttendancePage } from './components/AttendancePage'
+import { ExamsPage } from './components/ExamsPage'
 import { ClassesPage } from './components/ClassesPage'
 import { ForgotPasswordPage } from './components/ForgotPasswordPage'
 import { LoginPage } from './components/LoginPage'
 import { MarkAttendancePage } from './components/MarkAttendancePage'
 import { MyAttendancePage } from './components/MyAttendancePage'
+import { MyResultsPage } from './components/MyResultsPage'
 import { MyTimetablePage } from './components/MyTimetablePage'
 import { PeopleListPage } from './components/PeopleListPage'
 import { NoticeBoardPage } from './components/NoticeBoardPage'
@@ -32,6 +34,8 @@ type View =
   | { name: 'mark-attendance' }
   | { name: 'my-attendance' }
   | { name: 'notices' }
+  | { name: 'exams' }
+  | { name: 'my-results' }
 
 /**
  * The emailed link points at /?token=…, so the token in the URL decides the
@@ -159,6 +163,18 @@ function App() {
       )
     }
 
+    if (view.name === 'exams' && (session.user.role === 'admin' || session.user.role === 'teacher')) {
+      return (
+        <ExamsPage user={session.user} onBack={() => goTo({ name: 'home' })} onSignOut={handleSignOut} />
+      )
+    }
+
+    if (view.name === 'my-results' && session.user.role === 'student') {
+      return (
+        <MyResultsPage user={session.user} onBack={() => goTo({ name: 'home' })} onSignOut={handleSignOut} />
+      )
+    }
+
     if (session.user.role === 'admin') {
       return (
         <AdminDashboardPage
@@ -169,6 +185,7 @@ function App() {
           onOpenTimetable={() => goTo({ name: 'admin-timetable' })}
           onOpenAttendance={() => goTo({ name: 'admin-attendance' })}
           onOpenNotices={() => goTo({ name: 'notices' })}
+          onOpenExams={() => goTo({ name: 'exams' })}
           onSignOut={handleSignOut}
         />
       )
@@ -182,6 +199,8 @@ function App() {
         onOpenMarkAttendance={() => goTo({ name: 'mark-attendance' })}
         onOpenMyAttendance={() => goTo({ name: 'my-attendance' })}
         onOpenNotices={() => goTo({ name: 'notices' })}
+        onOpenExams={() => goTo({ name: 'exams' })}
+        onOpenMyResults={() => goTo({ name: 'my-results' })}
         onSignOut={handleSignOut}
       />
     )

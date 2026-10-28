@@ -7,6 +7,7 @@ import { AppService } from './app.service.js';
 import { AttendanceModule } from './attendance/attendance.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { ClassesModule } from './classes/classes.module.js';
+import { ExamsModule } from './exams/exams.module.js';
 import { MailModule } from './mail/mail.module.js';
 import { NoticeModule } from './notices/notice.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
@@ -27,6 +28,7 @@ import { TeachersModule } from './teachers/teachers.module.js';
     ClassesModule,
     NoticeModule,
     AttendanceModule,
+    ExamsModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

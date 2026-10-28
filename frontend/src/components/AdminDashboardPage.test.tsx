@@ -23,6 +23,7 @@ function renderPage(overrides: Partial<Parameters<typeof AdminDashboardPage>[0]>
     onOpenTimetable: vi.fn(),
     onOpenAttendance: vi.fn(),
     onOpenNotices: vi.fn(),
+    onOpenExams: vi.fn(),
     onSignOut: vi.fn(),
     ...overrides,
   }

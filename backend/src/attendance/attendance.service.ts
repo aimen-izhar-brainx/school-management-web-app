@@ -171,7 +171,6 @@ export class AttendanceService {
     return this.studentMonth(studentId, month);
   }
 
-  /** Sections the caller can mark/browse (admin: all, teacher: ones they are class teacher of). Rosters load per section. */
   async listSections(user: JwtPayload) {
     const teacher =
       user.role === 'teacher'
@@ -197,7 +196,6 @@ export class AttendanceService {
     }));
   }
 
-  /** The current students of one section, ordered by roll number. */
   async rosterForSection(user: JwtPayload, sectionId: string) {
     const section = await this.getSectionOrThrow(sectionId);
     await this.assertCanManageSection(user, section.classTeacherId);

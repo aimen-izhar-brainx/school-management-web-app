@@ -25,6 +25,7 @@ interface AdminDashboardPageProps {
   onOpenTimetable: () => void
   onOpenAttendance: () => void
   onOpenNotices: () => void
+  onOpenExams: () => void
   onSignOut: () => void
 }
 
@@ -54,6 +55,7 @@ export function AdminDashboardPage({
   onOpenTimetable,
   onOpenAttendance,
   onOpenNotices,
+  onOpenExams,
   onSignOut,
 }: AdminDashboardPageProps) {
   const role = getRole('admin')
@@ -140,16 +142,18 @@ export function AdminDashboardPage({
       hover: 'hover:border-rose-200 hover:bg-rose-50',
       onClick: onOpenNotices,
     },
-  ]
-
-  const comingSoonItems: ComingSoonItem[] = [
     {
       key: 'exams',
       label: 'Exams',
       description: 'Schedules, grading & report cards',
       icon: ClipboardList,
+      iconWrap: 'bg-indigo-50 text-indigo-600',
+      hover: 'hover:border-indigo-200 hover:bg-indigo-50',
+      onClick: onOpenExams,
     },
   ]
+
+  const comingSoonItems: ComingSoonItem[] = []
 
   return (
     <DashboardShell onOpenProfile={onOpenProfile} onSignOut={onSignOut}>

@@ -22,6 +22,8 @@ function renderPage(overrides: Partial<Parameters<typeof RoleHome>[0]> = {}) {
     onOpenMarkAttendance: vi.fn(),
     onOpenMyAttendance: vi.fn(),
     onOpenNotices: vi.fn(),
+    onOpenExams: vi.fn(),
+    onOpenMyResults: vi.fn(),
     onSignOut: vi.fn(),
     ...overrides,
   }

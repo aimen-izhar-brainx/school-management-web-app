@@ -1,11 +1,11 @@
 ---
-diff_hash: 72be6f06c3a158dbb77cc7e6bb46345a7dedf627fe7624ea5db8747aec56458c
-reviewed_at: 2026-10-23T09:10:23Z
+diff_hash: fe44f52fe606cd5df3869c65ffd7332ec3c841ba4eea8e8f772398aa67bc42a2
+reviewed_at: 2026-10-28T07:27:00Z
 ---
 
 ## Summary
 
-Adds an attendance module: Prisma models and migrations (Attendance, AttendanceRecord, AttendanceAuditLog, present/absent/leave), a NestJS controller and service with role-based access, and frontend pages rewired from mock data to the API. The authz model is sound: guards on the controller, student ownership check, teacher class-teacher check, admin-only corrections. The findings are a client/server date mismatch, a non-atomic correction flow, a check-then-write race, a missing FK index, an unbounded roster endpoint, and no backend tests. Frontend and backend contracts in this diff are consistent with each other. No Critical or High issues.
+Adds the exam module: Prisma models (Exam, ExamMark, GradeBand) with three migrations, a NestJS `exams` module (CRUD, per-class marks, mark entry, grade scale, student results), and the React UI (exams page, mark-entry drawer, report cards, grade-scale editor, my-results page, toasts). Also restructures RoleHome into a nav-item list and removes two doc comments in the attendance service. Stack: NestJS + React (Prisma, class-validator). No cross-repo contract mismatch found, apart from the parent-role finding below.
 
 ## Findings
 
@@ -13,54 +13,54 @@ Adds an attendance module: Prisma models and migrations (Attendance, AttendanceR
 
 ### High (0)
 
-### Medium (5)
-- **frontend/src/data/attendance.ts:47** — `getTodayKey()` uses the browser's local date, but the backend (`todayUtc()` in attendance.service.ts:~58) compares against the UTC date. For any school not on UTC, for several hours a day the client's "today" is a different UTC day. Teachers then get "Attendance cannot be marked for a future date" (zones ahead of UTC) or "Teachers can only mark attendance for today" (zones behind UTC), and the date picker's `max` disagrees with the server. *(correctness)*
+### Medium (3)
+- **backend/src/exams/exams.service.ts:130** — `listMarks` (and `findAll`) scope teachers to any section where they are class teacher or teach *any* subject, then return every exam's marks for the section. A subject teacher therefore reads the marks of every other subject in that class. Only admins and the class teacher should see all subjects; other teachers should be filtered to the exams for subjects they teach. *(security)*
   - status: fixed
   - dev_reasoning: N/A
-  - ai_reasoning: Pick one source of truth, e.g. a configured school timezone used by both sides, or have the server return "today" and the client use it.
-- **frontend/src/components/AttendancePage.tsx:saveEditing** — Corrections are saved with a sequential `await correctRecord(...)` loop, one PATCH per changed student. A failure partway leaves a partially applied correction, and the UI only reloads and shows one generic error. Each request also does its own read-then-write server-side. *(correctness)*
-  - status: ignored
-  - dev_reasoning: We will change only one record at a time
-  - ai_reasoning: Add a batch correction endpoint (one transaction, one shared reason) or at least report which records were saved and which failed.
-- **backend/src/attendance/attendance.service.ts:correctRecord** — The current status is read, compared, then updated in a separate query. Two concurrent corrections can both pass the `record.status === dto.status` check, so the audit log records an `oldStatus` that was not the real prior value. The audit trail is the integrity feature of this module. *(correctness)*
-  - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: Use `updateMany({ where: { id, status: record.status } })` inside the transaction and treat 0 rows as a conflict (409), or read the old status inside an interactive `$transaction`.
-- **backend/prisma/schema.prisma (AttendanceRecord) / migration 20261023075137** — `AttendanceRecord.sessionId` is a foreign key with no index. The session's `records` include and the ON DELETE CASCADE from Attendance both look rows up by `sessionId`, so these become sequential scans as the table grows. The existing indexes lead with sectionId or studentId. *(performance)*
-  - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: Add `@@index([sessionId])` and a new migration.
-- **backend/src/attendance/ (whole module)** — About 400 lines of authorization-sensitive service logic have no backend tests (no `*.spec.ts` staged). The three frontend attendance test files were deleted and replaced with a single `AttendanceApi.test.tsx`. Teacher/student/admin scoping, the exactly-once roster check, the future-date rule and the P2002→409 mapping are all unverified. *(test-coverage)*
-  - status: ignored
-  - dev_reasoning: test are not part of this scope
-  - ai_reasoning: Add service specs covering at least the role/ownership matrix and the roster and date validation.
+  - ai_reasoning: `listMarks` now also applies `examScope(viewer)` to the `examMark` query (`exam: { AND: [{ sectionId }, examScope] }`), so non-admin, non-class-teacher viewers only get marks for exams of subjects they teach, matching the write path.
 
-### Low (2)
-- **backend/src/attendance/attendance.service.ts:listSections** — For admins this returns every section with every student's roster in one unpaginated response, and the frontend loads it on every attendance page. This is acceptable at small scale but grows with school size. *(performance)*
+- **backend/src/exams/exams.controller.ts:62** — `GET /exams/grade-scale` has no `@Roles` and `my-results` is `@Roles('student')` only, but `App.tsx` routes the `parent` role to `MyResultsPage`. A parent reaching that page would get 403 from `/exams/my-results`. Either allow parents on the backend (with a child-ownership check) or remove `parent` from the frontend route guard. *(correctness)*
   - status: fixed
   - dev_reasoning: N/A
-  - ai_reasoning: Consider loading rosters per selected section, or paginating.
-- **backend/prisma/schema.prisma (AttendanceRecord)** — `sectionId` and `date` are denormalised from the parent Attendance with no DB-level guarantee they match it. The unique `(studentId, date)` also means a student moved to another section after being marked on a date cannot be marked there that day, and gets a misleading "section and date already submitted" 409. *(maintainability)*
+  - ai_reasoning: `App.tsx` no longer routes the `parent` role to `MyResultsPage`; the frontend guard and the `@Roles('student')` backend contract now agree.
+
+- **backend/src/exams/exams.service.ts:196** — `saveMarks` runs `deleteMany` for every student not in `entries`, followed by one `upsert` per entry, with no cap on the size of `entries`. An empty or partial payload silently wipes existing marks, and a very large object produces an unbounded transaction (`SaveMarksDto` only has `@IsObject`). Add `@ArrayMaxSize`-style bounds (for example a key-count limit) and validate the value type in the DTO instead of in the service loop. *(correctness)*
+  - status: fixed
+  - dev_reasoning: N/A
+  - ai_reasoning: `SaveMarksDto` now validates via `MarkEntriesConstraint`: at most `MAX_MARK_ENTRIES` (500) keys, each a finite non-negative number, so the payload is bounded and value types are checked in the DTO.
+
+### Low (3)
+- **backend/src/exams/exams.service.ts:1** — The first import is collapsed onto one line (`import {BadRequestException,ConflictException,...}`) and `update-exam.dto.ts:2` has an over-long import. Both ignore the project's formatting; run the formatter. *(consistency)*
+  - status: fixed
+  - dev_reasoning: N/A
+  - ai_reasoning: Imports in `exams.service.ts` are now formatted one per line; resolved.
+
+- **backend/src/attendance/attendance.service.ts:174** — Two JSDoc comments on `listSections` and `rosterForSection` were deleted. They are unrelated to the exam feature and described non-obvious behaviour (which sections a caller can browse, and that rosters load per section). Restore them or move the removal into its own commit. *(maintainability)*
   - status: ignored
-  - dev_reasoning: Students are not moved between sections mid-day, so the transfer case doesn't arise.
-  - ai_reasoning: Document the invariant, or derive section/date through the session relation; handle the transfer case with a clearer message.
+  - dev_reasoning: comments not needed
+  - ai_reasoning: Unrelated change inside an otherwise exam-only diff.
+
+- **frontend/src/components/RoleHome.tsx:37** — The destructured props lost their trailing comma (`onSignOut`), unlike the rest of the file and the project's style. *(consistency)*
+  - status: fixed
+  - dev_reasoning: N/A
+  - ai_reasoning: The trailing comma after `onSignOut` is restored; resolved.
 
 ## Reviewed files
-- backend/prisma/migrations/20261023075137_add_attendance_module/migration.sql
-- backend/prisma/migrations/20261023120000_add_attendance_leave_status/migration.sql
+- .code-reviews/brainx-review.md (deleted)
+- backend/prisma/migrations/20261027000000_add_exam_module/migration.sql
+- backend/prisma/migrations/20261028000000_add_exam_marks/migration.sql
+- backend/prisma/migrations/20261029000000_add_grade_scale/migration.sql
 - backend/prisma/schema.prisma
 - backend/src/app.module.ts
-- backend/src/attendance/attendance.controller.ts
-- backend/src/attendance/attendance.module.ts
 - backend/src/attendance/attendance.service.ts
-- backend/src/attendance/dto/attendance-query.dto.ts
-- backend/src/attendance/dto/submit-attendance.dto.ts
-- frontend/src/components/AdminDashboardPage.tsx (skimmed)
-- frontend/src/components/AttendanceApi.test.tsx (skimmed)
-- frontend/src/components/AttendancePage.tsx
-- frontend/src/components/MarkAttendancePage.tsx
-- frontend/src/components/MyAttendancePage.tsx (skimmed)
-- frontend/src/components/useAttendanceSections.ts
-- frontend/src/data/attendance.ts
-- frontend/src/lib/attendance.ts
-- deleted: AttendancePage.test.tsx, AttendancePage.largeRoster.test.tsx, MyAttendancePage.test.tsx, .code-reviews/brainx-review.md (previous review file)
+- backend/src/exams/dto/* (5 files)
+- backend/src/exams/exams.controller.ts
+- backend/src/exams/exams.module.ts
+- backend/src/exams/exams.service.ts
+- frontend/src/App.tsx
+- frontend/src/components/AdminDashboardPage.tsx, AdminDashboardPage.test.tsx
+- frontend/src/components/RoleHome.tsx, RoleHome.test.tsx
+- frontend/src/components/ExamsPage.tsx, ExamsTab.tsx, CreateExamModal.tsx, GradeScaleEditor.tsx, MarkEntry.tsx, MarkEntryLoader.tsx, MyResultsPage.tsx, ReportCard.tsx, ReportCardsTab.tsx, Overlay.tsx, Toasts.tsx, examStyles.ts, examUi.tsx, useExamData.ts, useToasts.ts (skimmed: MarkEntry.tsx submit path, useExamData.ts, useToasts.ts; the remaining presentational components were not read in full)
+- frontend/src/data/exams.ts
+- frontend/src/lib/exams.ts
+- frontend/src/index.css (skimmed)

@@ -33,6 +33,8 @@ model User {
 
   attendanceSubmitted Attendance[]         @relation("AttendanceSubmittedBy")
   attendanceChanges   AttendanceAuditLog[] @relation("AttendanceChangedBy")
+  examsCreated        Exam[]               @relation("ExamCreatedBy")
+  marksEntered        ExamMark[]           @relation("ExamMarkEnteredBy")
 }
 
 enum NoticeAudience {
@@ -97,6 +99,7 @@ model Student {
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
   attendance    AttendanceRecord[]
+  examMarks     ExamMark[]
 }
 
 model Teacher {
@@ -141,6 +144,7 @@ model Section {
 
   attendance        Attendance[]
   attendanceRecords AttendanceRecord[]
+  exams             Exam[]
 
   @@unique([classId, name])
   @@index([classTeacherId])
@@ -211,4 +215,46 @@ model AttendanceAuditLog {
 
   @@index([recordId])
   @@index([changedById])
+}
+
+model Exam {
+  id          String   @id @default(cuid())
+  name        String
+  sectionId   String
+  section     Section  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  subject     String
+  date        DateTime @db.Date
+  totalMarks  Int
+  createdById String
+  createdBy   User     @relation("ExamCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  marks       ExamMark[]
+
+  @@unique([sectionId, subject, name])
+  @@index([date])
+  @@index([createdById])
+}
+
+model ExamMark {
+  id          String   @id @default(cuid())
+  examId      String
+  exam        Exam     @relation(fields: [examId], references: [id], onDelete: Cascade)
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  marks       Float
+  enteredById String
+  enteredBy   User     @relation("ExamMarkEnteredBy", fields: [enteredById], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([examId, studentId])
+  @@index([studentId])
+  @@index([enteredById])
+}
+
+model GradeBand {
+  id         String @id @default(cuid())
+  grade      String @unique
+  minPercent Float  @unique
 }
